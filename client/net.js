@@ -111,7 +111,7 @@ export class LocalTransport {
 
   startGame(m) {
     const g = new Game({ mode: 'practice', fillTo: this.fillTo, botLevel: this.botLevel });
-    const p = g.addPlayer({ name: m.name || '나', weapon: m.weapon, cosmetics: m.cos });
+    const p = g.addPlayer({ name: m.name || '나', weapon: m.weapon, cosmetics: m.cos, spells: m.spells });
     this.pid = p.id;
     g.start();
     this.game = g;

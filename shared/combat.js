@@ -2,19 +2,19 @@
 // 수치/규칙 근거: docs/COMBAT_DESIGN.md
 import { TAU, angleDiff, dist2, segPointDist2 } from './math.js';
 import * as C from './constants.js';
-import { WEAPONS, ARMORS, BOOTS, RARITIES } from './items.js';
-import { startDash, resolveStatic } from './physics.js';
+import { WEAPONS, ARMORS, BOOTS, SPELLS, RARITIES, GRADE_CD, ultGrade } from './items.js';
+import { startDash, resolveStatic, wallBlocked } from './physics.js';
 
 export const KIND_CODE = { basic: 0, skill: 1, ult: 2, dot: 3, monster: 4, slam: 5, zone: 6 };
 export const PROJ_KINDS = ['arrow', 'pierce', 'fireball', 'icebolt', 'lance', 'dagger', 'javelin', 'bone', 'orbshot'];
 export const AREA_KINDS = ['ground', 'field', 'ring', 'leap', 'line', 'slam', 'burn'];
 
 const PROJ_KIND_FOR = {
-  longbow: { basic: 'arrow', s1: 'pierce', s2: 'arrow' },
+  longbow: { basic: 'arrow', q: 'pierce', w: 'arrow', e: 'arrow' },
   firestaff: { basic: 'fireball' },
-  froststaff: { basic: 'icebolt', s2: 'lance' },
-  daggers: { s2: 'dagger' },
-  spear: { ult: 'javelin' },
+  froststaff: { basic: 'icebolt', q: 'lance' },
+  daggers: { w: 'dagger' },
+  spear: { r: 'javelin' },
 };
 
 function r2(v) {
@@ -26,10 +26,15 @@ export const CombatMixin = {
     this.events.push(ev);
   },
 
-  // 무기 등급·레벨·오브·갑옷에 따른 피해 배율
-  powerMult(p, kind) {
-    let m = C.levelMult(p.level) * RARITIES[p.gear.weapon.rarity].mult;
-    if (p.orbs.includes(0)) m *= 1.15;
+  // 스킬 등급·레벨·오브·갑옷에 따른 피해 배율
+  gradeOf(p, key) {
+    if (key === 'r') return ultGrade(p.grade);
+    return p.grade[key] || 0;
+  },
+
+  powerMult(p, kind, key = 'basic') {
+    let m = C.levelMult(p.level) * RARITIES[this.gradeOf(p, key)].mult;
+    if (p.orbs.includes(0)) m *= 1.25;
     if ((kind === 'skill' || kind === 'ult') && p.gear.armor) m *= 1 + ARMORS[p.gear.armor.type].skillDmg;
     return m;
   },
@@ -74,15 +79,15 @@ export const CombatMixin = {
     if (!this.canAct(p)) return false;
     const w = this.weapon(p);
     const sk = w[key];
-    if (key === 'ult') {
+    if (key === 'r') {
       if (p.ult < 100) return false;
     } else if (p.cd[key] > 0) return false;
     const ok = this.startSkill(p, key, sk);
     if (!ok) return false;
     this.breakStealth(p);
-    if (key === 'ult') p.ult = 0;
+    if (key === 'r') p.ult = 0;
     else {
-      p.cd[key] = sk.cd * p.cdMult;
+      p.cd[key] = sk.cd * p.cdMult * GRADE_CD[this.gradeOf(p, key)];
       p.cdMax[key] = p.cd[key];
     }
     this.emit({ e: 'skill', id: p.id, k: key, w: p.gear.weapon.type, x: Math.round(p.x), y: Math.round(p.y), a: r2(p.aim) });
@@ -108,10 +113,11 @@ export const CombatMixin = {
   },
 
   startSkill(p, key, sk) {
-    const kind = key === 'ult' ? 'ult' : 'skill';
+    const kind = key === 'r' ? 'ult' : 'skill';
     const base = { key, sk, t: 0, done: false, dir: p.aim, kind };
     switch (sk.type) {
       case 'proj':
+      case 'fan':
       case 'cone':
       case 'nova':
         p.act = { ...base, hitAt: sk.windup || 0, dur: sk.dur || 0.3, moveMult: sk.moveMult ?? 0.6 };
@@ -126,18 +132,22 @@ export const CombatMixin = {
         const ang = Math.atan2(ty - p.y, tx - p.x);
         startDash(p, Math.cos(ang), Math.sin(ang), sk.air, dist);
         p.act = { ...base, hitAt: 99, dur: sk.air + 0.12, moveMult: 0, dir: ang };
-        this.addArea({ kind: 'leap', x: tx, y: ty, r: sk.r, delay: sk.air, dur: sk.air + 0.05, owner: p.id, team: p.team, dmg: sk.dmg * this.powerMult(p, kind), stun: sk.stun, ckind: kind, color: p.gear.weapon.type, follow: true });
+        this.addArea({ kind: 'leap', x: tx, y: ty, r: sk.r, delay: sk.air, dur: sk.air + 0.05, owner: p.id, team: p.team, dmg: sk.dmg * this.powerMult(p, kind, key), stun: sk.stun, ckind: kind, color: p.gear.weapon.type, follow: true });
         return true;
       }
       case 'line': {
         p.act = { ...base, hitAt: 99, dur: sk.dur, moveMult: 0 };
-        this.addArea({ kind: 'line', x: p.x, y: p.y, ang: p.aim, len: sk.len, width: sk.width, r: sk.len, delay: sk.windup, dur: sk.windup + 0.15, owner: p.id, team: p.team, dmg: sk.dmg * this.powerMult(p, kind), stun: sk.stun, ckind: kind, color: p.gear.weapon.type });
+        this.addArea({ kind: 'line', x: p.x, y: p.y, ang: p.aim, len: sk.len, width: sk.width, r: sk.len, delay: sk.windup, dur: sk.windup + 0.15, owner: p.id, team: p.team, dmg: sk.dmg * this.powerMult(p, kind, key), stun: sk.stun, ckind: kind, color: p.gear.weapon.type });
         return true;
       }
       case 'dashstrike': {
         if (p.st.rootT > 0) return false;
         startDash(p, Math.cos(p.aim), Math.sin(p.aim), sk.time, sk.dist);
-        p.act = { ...base, hitAt: 99, dur: sk.time + 0.06, moveMult: 0, hitSet: new Set(), dmg: sk.dmg * this.powerMult(p, kind) };
+        if (sk.shield) {
+          p.st.shield = Math.max(p.st.shield, sk.shield * this.powerMult(p, kind, key));
+          p.st.shieldT = 2.5;
+        }
+        p.act = { ...base, hitAt: 99, dur: sk.time + 0.06, moveMult: 0, hitSet: new Set(), dmg: sk.dmg * this.powerMult(p, kind, key) };
         return true;
       }
       case 'backflip': {
@@ -145,7 +155,7 @@ export const CombatMixin = {
         startDash(p, -Math.cos(p.aim), -Math.sin(p.aim), sk.time, sk.dist);
         p.act = { ...base, hitAt: 99, dur: sk.time + 0.05, moveMult: 0 };
         const pr = sk.proj;
-        this.spawnProj(p, { angle: p.aim, speed: pr.speed, range: pr.range, dmg: pr.dmg * this.powerMult(p, kind), r: pr.r, slow: pr.slow, pkind: 'arrow', ckind: kind });
+        this.spawnProj(p, { angle: p.aim, speed: pr.speed, range: pr.range, dmg: pr.dmg * this.powerMult(p, kind, key), r: pr.r, slow: pr.slow, pkind: 'arrow', ckind: kind });
         return true;
       }
       case 'ground':
@@ -157,6 +167,22 @@ export const CombatMixin = {
       case 'ring':
         p.act = { ...base, hitAt: 0.01, dur: sk.dur, moveMult: sk.moveMult };
         return true;
+      case 'blinkskill': {
+        if (p.st.rootT > 0) return false;
+        const [tx, ty] = this.aimPoint(p, sk.range);
+        const fx = p.x;
+        const fy = p.y;
+        p.x = tx;
+        p.y = ty;
+        p.kbx = 0;
+        p.kby = 0;
+        resolveStatic(p, this.obstacles, this.R);
+        p.act = { ...base, hitAt: 99, dur: 0.15, moveMult: 0.5 };
+        this.emit({ e: 'blink', id: p.id, x: Math.round(fx), y: Math.round(fy), x2: Math.round(p.x), y2: Math.round(p.y) });
+        const b = sk.burn;
+        this.addArea({ kind: 'burn', x: fx, y: fy, r: b.r, delay: 0, ticks: Infinity, every: b.every, dur: b.t, owner: p.id, team: p.team, dmg: b.dmg * this.powerMult(p, kind, key), ckind: kind, color: p.gear.weapon.type });
+        return true;
+      }
       case 'execute': {
         if (p.st.rootT > 0) return false;
         const tgt = this.executeTarget(p, sk.range);
@@ -174,7 +200,7 @@ export const CombatMixin = {
         p.aim = Math.atan2(tgt.y - p.y, tgt.x - p.x);
         p.act = { ...base, hitAt: 99, dur: 0.3, moveMult: 0.3 };
         this.emit({ e: 'blink', id: p.id, x: Math.round(fromX), y: Math.round(fromY), x2: Math.round(p.x), y2: Math.round(p.y) });
-        const dmg = (sk.dmg + sk.missing * (tgt.maxHp - tgt.hp)) * this.powerMult(p, kind);
+        const dmg = (sk.dmg + sk.missing * (tgt.maxHp - tgt.hp)) * this.powerMult(p, kind, key);
         this.dealDamage(p, tgt, dmg, { kind, pre: true, big: true });
         return true;
       }
@@ -210,9 +236,9 @@ export const CombatMixin = {
       const need = Math.min(sk.hits, Math.floor((a.t / sk.dur) * sk.hits + 0.5));
       while (a.hits < need) {
         a.hits++;
-        this.novaHit(p, sk.r, sk.dmg * this.powerMult(p, a.kind), sk.knock, a.kind, null);
+        this.novaHit(p, sk.r, sk.dmg * this.powerMult(p, a.kind, a.key), sk.knock, a.kind, null);
       }
-    } else if (sk.type === 'dashstrike' && p.dashT > 0) {
+    } else if (sk.type === 'dashstrike' && sk.dmg > 0 && p.dashT > 0) {
       for (const u of this.units) {
         if (!u.alive || u.team === p.team || a.hitSet.has(u.id)) continue;
         if (dist2(u.x, u.y, p.x, p.y) > (sk.width + u.r) ** 2) continue;
@@ -233,6 +259,7 @@ export const CombatMixin = {
 
   performAction(p, a) {
     const sk = a.sk;
+    const key = a.key;
     const kind = a.key === 'basic' ? 'basic' : a.kind;
     const wtype = p.gear.weapon.type;
     switch (sk.type) {
@@ -245,10 +272,10 @@ export const CombatMixin = {
           angle: p.aim,
           speed: sk.speed,
           range: sk.range,
-          dmg: sk.dmg * this.powerMult(p, kind),
+          dmg: sk.dmg * this.powerMult(p, kind, key),
           r: sk.r,
           pierce: sk.pierce || 0,
-          dot: sk.dot ? { dmg: sk.dot.dmg * this.powerMult(p, kind), t: sk.dot.t } : null,
+          dot: sk.dot ? { dmg: sk.dot.dmg * this.powerMult(p, kind, key), t: sk.dot.t } : null,
           slow: sk.slow || null,
           chill: sk.chill || 0,
           root: sk.root || 0,
@@ -258,8 +285,15 @@ export const CombatMixin = {
         });
         break;
       }
+      case 'fan': {
+        for (let i = 0; i < sk.count; i++) {
+          const ang = p.aim + (i / (sk.count - 1) - 0.5) * sk.spread;
+          this.spawnProj(p, { angle: ang, speed: sk.speed, range: sk.range, dmg: sk.dmg * this.powerMult(p, kind, key), r: sk.r, knock: sk.knock || 0, pkind: 'arrow', ckind: kind });
+        }
+        break;
+      }
       case 'cone': {
-        const dmg = sk.dmg * this.powerMult(p, kind);
+        const dmg = sk.dmg * this.powerMult(p, kind, key);
         this.emit({ e: 'cone', id: p.id, x: Math.round(p.x), y: Math.round(p.y), a: r2(p.aim), r: sk.range, arc: sk.arc, w: wtype });
         for (const u of this.units) {
           if (!u.alive || u.team === p.team) continue;
@@ -271,12 +305,12 @@ export const CombatMixin = {
           const tol = d > u.r ? Math.asin(u.r / d) : Math.PI;
           if (Math.abs(angleDiff(p.aim, Math.atan2(dy, dx))) > sk.arc / 2 + tol) continue;
           const dealt = this.dealDamage(p, u, dmg, { kind, pre: true });
-          if (dealt >= 0 && sk.dot) this.addDot(u, sk.dot.dmg * this.powerMult(p, kind), sk.dot.t, p, 'burn');
+          if (dealt >= 0 && sk.dot) this.addDot(u, sk.dot.dmg * this.powerMult(p, kind, key), sk.dot.t, p, 'burn');
         }
         break;
       }
       case 'nova':
-        this.novaHit(p, sk.r, sk.dmg * this.powerMult(p, kind), sk.knock, kind, wtype);
+        this.novaHit(p, sk.r, sk.dmg * this.powerMult(p, kind, key), sk.knock, kind, wtype, sk.slow);
         break;
       case 'ground':
         this.addArea({
@@ -290,10 +324,10 @@ export const CombatMixin = {
           dur: sk.delay + (sk.ticks - 1) * (sk.every || 0) + 0.2,
           owner: p.id,
           team: p.team,
-          dmg: sk.dmg * this.powerMult(p, kind),
+          dmg: sk.dmg * this.powerMult(p, kind, key),
           stun: sk.stun || 0,
           slow: sk.slow || null,
-          after: sk.after ? { t: sk.after.t, every: sk.after.every, dmg: sk.after.dmg * this.powerMult(p, kind) } : null,
+          after: sk.after ? { t: sk.after.t, every: sk.after.every, dmg: sk.after.dmg * this.powerMult(p, kind, key) } : null,
           ckind: kind,
           color: wtype,
         });
@@ -310,7 +344,7 @@ export const CombatMixin = {
           dur: 0.25 + sk.t,
           owner: p.id,
           team: p.team,
-          dmg: sk.dmg * this.powerMult(p, kind),
+          dmg: sk.dmg * this.powerMult(p, kind, key),
           slow: sk.slow,
           freezeAfter: sk.freezeAfter,
           freeze: sk.freeze,
@@ -321,7 +355,7 @@ export const CombatMixin = {
         });
         break;
       case 'ring':
-        this.addArea({ kind: 'ring', x: p.x, y: p.y, r: sk.r, delay: sk.delay, ticks: 1, dur: sk.delay + 0.2, owner: p.id, team: p.team, dmg: sk.dmg * this.powerMult(p, kind), root: sk.root, ckind: kind, color: wtype, follow: true });
+        this.addArea({ kind: 'ring', x: p.x, y: p.y, r: sk.r, delay: sk.delay, ticks: 1, dur: sk.delay + 0.2, owner: p.id, team: p.team, dmg: sk.dmg * this.powerMult(p, kind, key), root: sk.root, ckind: kind, color: wtype, follow: true });
         break;
       default:
         break;
@@ -334,7 +368,7 @@ export const CombatMixin = {
   },
 
   meleeHit(p, dir, c, kind) {
-    const dmg = c.dmg * this.powerMult(p, kind);
+    const dmg = c.dmg * this.powerMult(p, kind, 'basic');
     for (const u of this.units) {
       if (!u.alive || u === p || u.team === p.team) continue;
       const dx = u.x - p.x;
@@ -350,82 +384,62 @@ export const CombatMixin = {
     }
   },
 
-  novaHit(p, r, dmg, knock, kind, wtype) {
+  novaHit(p, r, dmg, knock, kind, wtype, slow = null) {
     if (wtype) this.emit({ e: 'nova', id: p.id, x: Math.round(p.x), y: Math.round(p.y), r, w: wtype });
     for (const u of this.units) {
       if (!u.alive || u === p || u.team === p.team) continue;
       if (dist2(u.x, u.y, p.x, p.y) > (r + u.r) ** 2) continue;
       const dealt = this.dealDamage(p, u, dmg, { kind, pre: true });
       if (dealt >= 0 && knock) this.knock(u, p.x, p.y, knock, p);
+      if (dealt >= 0 && slow) this.addSlow(u, slow.amt, slow.t, `nova${p.id}`);
     }
   },
 
-  // ---------------- 갑옷(E) / 신발(Space) ----------------
-  tryArmor(p) {
-    if (!p.alive || p.cd.e > 0) return false;
-    const a = ARMORS[p.gear.armor.type];
-    const sk = a.skill;
-    if (sk.type === 'purify') {
-      // 기절 중에도 사용 가능
-      p.st.stunT = 0;
-      p.st.rootT = 0;
-      p.st.slows.length = 0;
-      p.st.ccImmT = Math.max(p.st.ccImmT, sk.immune);
-      p.st.shield = sk.shield * RARITIES[p.gear.armor.rarity].mult;
-      p.st.shieldT = 3;
-    } else {
-      if (p.st.stunT > 0) return false;
-      if (sk.type === 'shadow') {
-        p.st.invisT = sk.t;
-        p.act = null;
-      } else if (sk.type === 'bulwark') {
-        p.st.bulwarkT = sk.t;
-      }
-    }
-    p.cd.e = sk.cd * p.cdMult;
-    p.cdMax.e = p.cd.e;
-    this.emit({ e: 'armor', id: p.id, k: sk.type, x: Math.round(p.x), y: Math.round(p.y) });
-    return true;
-  },
-
-  tryBoots(p) {
-    if (!p.alive || p.cd.space > 0 || p.st.stunT > 0) return false;
-    const sk = BOOTS[p.gear.boots.type].skill;
-    if (sk.type !== 'sprint' && p.st.rootT > 0) return false;
-    let dx = p.input.mx;
-    let dy = p.input.my;
-    const len = Math.sqrt(dx * dx + dy * dy);
-    if (len < 0.1) {
-      dx = Math.cos(p.aim);
-      dy = Math.sin(p.aim);
-    } else {
+  // ---------------- 보조 주문 (D·F) ----------------
+  trySpell(p, slot) {
+    const id = p.spells[slot === 'd' ? 0 : 1];
+    const sp = SPELLS[id];
+    if (!p.alive || !sp || p.cd[slot] > 0) return false;
+    if (sp.type !== 'purify' && p.st.stunT > 0) return false;
+    if (sp.type === 'blink' && p.st.rootT > 0) return false;
+    if (sp.type === 'blink') {
+      let dx = (Number.isFinite(p.input.cx) ? p.input.cx : p.x + Math.cos(p.aim)) - p.x;
+      let dy = (Number.isFinite(p.input.cy) ? p.input.cy : p.y + Math.sin(p.aim)) - p.y;
+      const len = Math.sqrt(dx * dx + dy * dy) || 1;
+      const dist = Math.min(sp.dist, len);
       dx /= len;
       dy /= len;
-    }
-    if (sk.type === 'dash') {
-      p.act = null;
-      p.channel = null;
-      startDash(p, dx, dy, sk.time, sk.dist);
-      p.st.iframeT = sk.iframe;
-      this.emit({ e: 'dash', id: p.id, x: Math.round(p.x), y: Math.round(p.y), dx: r2(dx), dy: r2(dy) });
-    } else if (sk.type === 'blink') {
       p.act = null;
       p.channel = null;
       const fx = p.x;
       const fy = p.y;
-      p.x += dx * sk.dist;
-      p.y += dy * sk.dist;
+      p.x += dx * dist;
+      p.y += dy * dist;
       p.kbx = 0;
       p.kby = 0;
+      p.dashT = 0;
       resolveStatic(p, this.obstacles, this.R);
       this.emit({ e: 'blink', id: p.id, x: Math.round(fx), y: Math.round(fy), x2: Math.round(p.x), y2: Math.round(p.y) });
-    } else if (sk.type === 'sprint') {
-      p.st.sprintT = sk.t;
+    } else if (sp.type === 'sprint') {
+      p.st.sprintT = sp.t;
       p.st.slows.length = 0;
       this.emit({ e: 'sprint', id: p.id, x: Math.round(p.x), y: Math.round(p.y) });
+    } else if (sp.type === 'purify') {
+      p.st.stunT = 0;
+      p.st.rootT = 0;
+      p.st.slows.length = 0;
+      p.st.ccImmT = Math.max(p.st.ccImmT, sp.immune);
+      p.st.shield = Math.max(p.st.shield, sp.shield);
+      p.st.shieldT = 3;
+    } else if (sp.type === 'bulwark') {
+      p.st.bulwarkT = sp.t;
+    } else if (sp.type === 'shadow') {
+      p.st.invisT = sp.t;
+      p.act = null;
     }
-    p.cd.space = sk.cd * p.spaceCdMult;
-    p.cdMax.space = p.cd.space;
+    p.cd[slot] = sp.cd;
+    p.cdMax[slot] = sp.cd;
+    this.emit({ e: 'spell', id: p.id, k: sp.type, x: Math.round(p.x), y: Math.round(p.y) });
     return true;
   },
 
@@ -445,7 +459,8 @@ export const CombatMixin = {
     if (src && src.isPlayer && !ctx.pre) dmg *= this.powerMult(src, kind);
     if (tgt.isPlayer) {
       if (tgt.st.bulwarkT > 0 && kind !== 'zone') dmg *= 0.5;
-      if (tgt.orbs.includes(1)) dmg *= 0.85;
+      if (tgt.orbs.includes(1)) dmg *= 0.75;
+      if (tgt.dr) dmg *= 1 - tgt.dr;
     }
     if (tgt.st.shield > 0 && kind !== 'zone') {
       const absorbed = Math.min(tgt.st.shield, dmg);
@@ -462,7 +477,7 @@ export const CombatMixin = {
     }
     if (src && src.isPlayer && src !== tgt) {
       src.dmgDealt += tgt.isPlayer ? dmg : 0;
-      src.ult = Math.min(100, src.ult + dmg * C.ULT_PER_DMG * (tgt.isPlayer ? 1 : 0.3));
+      src.ult = Math.min(100, src.ult + dmg * C.ULT_PER_DMG * (tgt.isPlayer ? 1 : 0.3) * (src.orbs.includes(2) ? 2 : 1));
       if (tgt.isPlayer) {
         tgt.lastHitBy = src.id;
         tgt.lastHitByT = this.time;
@@ -683,6 +698,7 @@ export const CombatMixin = {
           break;
         }
       }
+      if (!dead && wallBlocked(ox, oy, pr.x, pr.y, this.walls, pr.r * 0.5)) dead = true;
       if (dead) {
         this.emit({ e: 'phit', x: Math.round(pr.x), y: Math.round(pr.y), k: pr.pkind });
         pr.alive = false;

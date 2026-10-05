@@ -227,7 +227,7 @@ kbd { display: inline-block; min-width: 26px; padding: 2px 7px; border-radius: 6
 .slot:hover .slot-tip { display: block; }
 #ping { position: absolute; bottom: 8px; right: 12px; font-size: 11px; color: var(--muted); }
 #ping.bad { color: var(--blood); }
-#deathscreen { position: absolute; top: 34%; left: 50%; transform: translateX(-50%); text-align: center; background: rgba(10, 4, 10, 0.7); border: 1px solid #ff335555; border-radius: 16px; padding: 18px 30px; }
+#deathscreen { position: absolute; top: 120px; left: 50%; transform: translateX(-50%); text-align: center; background: rgba(10, 4, 10, 0.7); border: 1px solid #ff335555; border-radius: 16px; padding: 18px 30px; }
 .death-title { font-family: var(--display); font-size: 36px; color: var(--blood); }
 .death-sub { font-size: 16px; }
 .death-sub b { color: var(--gold); font-size: 22px; }
@@ -254,3 +254,13 @@ kbd { display: inline-block; min-width: 26px; padding: 2px 7px; border-radius: 6
   .ann { font-size: 18px; white-space: normal; text-align: center; }
   .keys { grid-template-columns: 1fr; }
 }
+
+/* 스킬 등급 테두리 / 보조 주문 칸 */
+.slot.graded { border-color: var(--grade); box-shadow: 0 0 10px color-mix(in srgb, var(--grade) 60%, transparent); }
+.slot.spell { width: 50px; height: 50px; margin-left: 4px; }
+.slot.spell .slot-icon { font-size: 20px; }
+.spells { display: flex; gap: 6px; flex-wrap: wrap; }
+.spell-btn { flex: 1; min-width: 74px; background: var(--panel-2); border: 1px solid var(--line); color: var(--text); border-radius: 10px; padding: 7px 4px; font-weight: 800; font-size: 12px; position: relative; }
+.spell-btn i { display: block; font-style: normal; font-size: 16px; color: #9fe8ff; }
+.spell-btn.sel { border-color: #9fe8ff; box-shadow: 0 0 0 2px #9fe8ff inset; }
+.spell-btn b { position: absolute; top: 3px; right: 6px; font-size: 10px; color: var(--gold); }

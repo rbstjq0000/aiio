@@ -1,9 +1,13 @@
 // 게임 시뮬레이션 (서버 권한). 서버와 브라우저 연습 모드가 같은 코드를 실행한다.
 // 규칙 근거: docs/COMBAT_DESIGN.md
-import { TAU, clamp, dist2, lerp, makeRng, shuffle } from './math.js';
+import { TAU, clamp, dist2, lerp, makeRng, shuffle, segPointDist2 } from './math.js';
 import * as C from './constants.js';
-import { WEAPONS, ARMORS, BOOTS, RARITIES, WEAPON_IDS, ARMOR_IDS, BOOT_IDS, SLOT_KINDS, KIND_IDS, makeItem, rollItem, ORBS } from './items.js';
+import { WEAPONS, ARMORS, BOOTS, SPELLS, DEFAULT_SPELLS, RARITIES, ultGrade, WEAPON_IDS, ARMOR_IDS, BOOT_IDS, SLOT_KINDS, KIND_IDS, makeItem, rollItem, rollRarity, ORBS } from './items.js';
 import { MONSTERS, MSTATE, updateMonster } from './monsters.js';
+import { MAPS, DEFAULT_MAP, CAMP_TYPES } from './maps.js';
+import { NavGrid } from './nav.js';
+
+const NAV_CACHE = new Map();
 import { resolveStatic, separateUnits, stepBody } from './physics.js';
 import { randomCosmetics, sanitizeCosmetics } from './cosmetics.js';
 import { CombatMixin, PROJ_KINDS, AREA_KINDS } from './combat.js';
@@ -27,7 +31,7 @@ export const PF = {
   CHANNEL: 2048,
 };
 export const ALTAR_STATE = ['idle', 'warn', 'guarded', 'dropped', 'taken'];
-export const KIND_INDEX = { weapon: 0, armor: 1, boots: 2 };
+export const KIND_INDEX = { skill: 0, armor: 1, boots: 2 };
 
 function makeStatus() {
   return {
@@ -50,7 +54,7 @@ function makeStatus() {
 export const PRESS = C.PRESS;
 
 export function emptyInput() {
-  return { seq: 0, mx: 0, my: 0, aim: 0, atk: false, cx: 0, cy: 0, p: [0, 0, 0, 0, 0, 0, 0] };
+  return { seq: 0, mx: 0, my: 0, aim: 0, atk: false, cx: 0, cy: 0, ti: 0, p: new Array(C.PRESS_N).fill(0) };
 }
 
 const num = (v, d = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
@@ -68,8 +72,15 @@ export function sanitizeInput(raw, prev) {
   inp.cx = clamp(num(raw.cx, prev.cx), -5000, 5000);
   inp.cy = clamp(num(raw.cy, prev.cy), -5000, 5000);
   const pr = Array.isArray(raw.p) ? raw.p : [];
-  for (let i = 0; i < 7; i++) inp.p[i] = Math.max(prev.p[i], int(pr[i], prev.p[i]));
+  for (let i = 0; i < C.PRESS_N; i++) inp.p[i] = Math.max(prev.p[i], int(pr[i], prev.p[i]));
+  inp.ti = int(raw.ti, 0);
   return inp;
+}
+
+export function sanitizeSpells(sp) {
+  const out = Array.isArray(sp) ? sp.filter((x) => SPELLS[x]).slice(0, 2) : [];
+  for (const d of [...DEFAULT_SPELLS, 'ghost', 'barrier']) if (out.length < 2 && !out.includes(d)) out.push(d);
+  return out;
 }
 
 export function encodeItem(it) {
@@ -83,6 +94,9 @@ export class Game {
     this.mode = opts.mode || 'public';
     this.fillTo = opts.fillTo ?? C.MAX_PLAYERS;
     this.botLevel = opts.botLevel ?? 1; // 0 쉬움, 1 보통, 2 어려움
+    this.mapId = opts.map || DEFAULT_MAP;
+    this.camps = [];
+    this.walls = [];
     this.time = 0;
     this.tick = 0;
     this.state = 'waiting';
@@ -111,7 +125,7 @@ export class Game {
   }
 
   // ---------------- 참가자 ----------------
-  addPlayer({ name = '영혼', isBot = false, weapon = 'greatsword', cosmetics = null, skill = 0.5 } = {}) {
+  addPlayer({ name = '영혼', isBot = false, weapon = 'greatsword', cosmetics = null, skill = 0.5, spells = null } = {}) {
     const id = this.nextId++;
     const w = WEAPONS[weapon] ? weapon : 'greatsword';
     const p = {
@@ -141,8 +155,12 @@ export class Game {
       xp: 0,
       xpNext: C.xpForLevel(1),
       gear: { weapon: makeItem('weapon', w, 0), armor: makeItem('armor', 'cloth', 0), boots: makeItem('boots', 'swift', 0) },
-      cd: { s1: 0, s2: 0, e: 0, space: 0 },
-      cdMax: { s1: 1, s2: 1, e: 1, space: 1 },
+      grade: { q: 0, w: 0, e: 0 },
+      spells: sanitizeSpells(spells),
+      cd: { q: 0, w: 0, e: 0, d: 0, f: 0 },
+      cdMax: { q: 1, w: 1, e: 1, d: 1, f: 1 },
+      wantAct: null,
+      dr: 0,
       ult: 0,
       act: null,
       combo: 0,
@@ -173,12 +191,11 @@ export class Game {
       zoneTick: 0.5,
       input: emptyInput(),
       inputQueue: [],
-      lp: [0, 0, 0, 0, 0, 0, 0],
+      lp: new Array(C.PRESS_N).fill(0),
       ack: 0,
       uiVer: 1,
       speedMult: 1,
       cdMult: 1,
-      spaceCdMult: 1,
       freeSpeed: C.BASE_SPEED,
       brain: isBot ? makeBotBrain(this.rng, skill) : null,
     };
@@ -205,6 +222,7 @@ export class Game {
         weapon: WEAPON_IDS[Math.floor(this.rng() * WEAPON_IDS.length)],
         cosmetics: randomCosmetics(this.rng),
         skill: clamp(base + this.rng.range(-0.18, 0.18), 0.05, 0.95),
+        spells: shuffle(Object.keys(SPELLS), this.rng).slice(0, 2),
       });
     }
   }
@@ -232,7 +250,9 @@ export class Game {
   spectate(id, dir = 1) {
     const me = this.players.get(id);
     if (!me || me.alive) return;
-    const alive = [...this.players.values()].filter((p) => p.alive);
+    // 오브 보유자 우선, 없으면 생존자 전체
+    let alive = [...this.players.values()].filter((p) => p.alive && p.orbs.length);
+    if (!alive.length) alive = [...this.players.values()].filter((p) => p.alive);
     if (!alive.length) return;
     let idx = alive.findIndex((p) => p.id === me.specId);
     idx = (idx + dir + alive.length) % alive.length;
@@ -243,135 +263,58 @@ export class Game {
   start() {
     if (this.fillTo > this.players.size) this.fillBots();
     this.startCount = this.players.size;
-    this.generateMap(this.startCount);
+    this.loadMap(this.mapId);
     const ps = shuffle([...this.players.values()], this.rng);
-    const spawns = this.pickSpawns(ps.length);
+    const spawns = shuffle(this.map.spawns.slice(), this.rng);
     ps.forEach((p, i) => {
-      p.x = spawns[i][0];
-      p.y = spawns[i][1];
+      const sp = spawns[i % spawns.length];
+      const a = this.rng() * TAU;
+      p.x = sp[0] + (i >= spawns.length ? Math.cos(a) * 60 : 0);
+      p.y = sp[1] + (i >= spawns.length ? Math.sin(a) * 60 : 0);
       resolveStatic(p, this.obstacles, this.R);
       p.aim = Math.atan2(-p.y, -p.x);
       p.input.aim = p.aim;
       p.invulnT = C.SPAWN_PROTECT;
     });
-    this.zone = { active: false, x: 0, y: 0, r: this.R, fx: 0, fy: 0, fr: this.R, tx: 0, ty: 0, tr: this.R * C.ZONE_MIN_FRAC };
-    const a = this.rng() * TAU;
-    const d = this.rng() * this.R * 0.25;
-    this.zone.tx = Math.cos(a) * d;
-    this.zone.ty = Math.sin(a) * d;
+    const zc = this.map.zone;
+    this.zone = { active: false, x: 0, y: 0, r: this.R, fx: 0, fy: 0, fr: this.R, tx: zc.x, ty: zc.y, tr: this.R * C.ZONE_MIN_FRAC };
     this.rebuildUnits();
-    const target = this.monsterTarget();
-    for (let i = 0; i < 300 && this.monsterCount() < target; i++) this.trySpawnGroup(true);
-    for (let i = 0; i < this.eliteTarget(); i++) this.spawnElite();
+    for (const c of this.camps) if (c.type !== 'elite') this.spawnCamp(c);
     this.state = 'running';
   }
 
-  pickSpawns(n) {
-    const out = [];
-    const rng = this.rng;
-    const maxR = this.R * 0.86;
-    for (let i = 0; i < n; i++) {
-      let best = null;
-      let bestScore = -1;
-      for (let k = 0; k < 40; k++) {
-        const a = rng() * TAU;
-        const d = Math.sqrt(rng()) * maxR;
-        const x = Math.cos(a) * d;
-        const y = Math.sin(a) * d;
-        if (this.blocked(x, y, 40)) continue;
-        let minD = Infinity;
-        for (const q of out) minD = Math.min(minD, dist2(x, y, q[0], q[1]));
-        for (const s of this.altars) minD = Math.min(minD, dist2(x, y, s.x, s.y) * 2.5);
-        if (minD > bestScore) {
-          bestScore = minD;
-          best = [x, y];
-        }
-      }
-      out.push(best || [0, 0]);
-    }
-    return out;
+  // 맵 데이터(shared/maps.js) 적용
+  loadMap(id) {
+    const m = MAPS[id] || MAPS[DEFAULT_MAP];
+    this.map = m;
+    this.mapId = m.id;
+    this.R = m.R;
+    this.obstacles = m.pillars.map((o) => ({ ...o }));
+    this.obstacles.walls = m.walls;
+    this.walls = m.walls;
+    if (!NAV_CACHE.has(m.id)) NAV_CACHE.set(m.id, new NavGrid(m.R, this.obstacles, m.walls));
+    this.nav = NAV_CACHE.get(m.id);
+    this.altars = m.altars.map((al, i) => ({ i, x: al.x, y: al.y, state: 'idle', guardian: 0 }));
+    this.chests = m.chests.map((c) => ({ id: this.nextId++, x: c.x, y: c.y, open: false, respawnT: 0 }));
+    // 엘리트 캠프는 1분 뒤부터
+    this.camps = m.camps.map((c) => ({ id: this.nextId++, x: c.x, y: c.y, type: c.type, mobs: [], respawnT: c.type === 'elite' ? 60 : 0, alive: false }));
   }
 
   blocked(x, y, pad) {
     for (const o of this.obstacles) if (dist2(x, y, o.x, o.y) < (o.r + pad) ** 2) return true;
+    for (const w of this.walls) if (segPointDist2(w[0], w[1], w[2], w[3], x, y) < (w[4] / 2 + pad) ** 2) return true;
     return false;
-  }
-
-  generateMap(n) {
-    const R = (this.R = C.mapRadiusFor(n));
-    const rng = this.rng;
-    const obs = (this.obstacles = []);
-    const canPlace = (x, y, r, gap) => {
-      if (Math.sqrt(x * x + y * y) > R - r - 70) return false;
-      for (const o of obs) if (dist2(x, y, o.x, o.y) < (o.r + r + gap) ** 2) return false;
-      return true;
-    };
-    // 폐허 (원형으로 늘어선 기둥)
-    const ruins = Math.round(R / 380);
-    for (let i = 0; i < ruins; i++) {
-      const a = rng() * TAU;
-      const d = Math.sqrt(rng()) * (R - 360);
-      const cx = Math.cos(a) * d;
-      const cy = Math.sin(a) * d;
-      const ringR = rng.range(130, 210);
-      const cnt = rng.int(5, 8);
-      const rot = rng() * TAU;
-      for (let k = 0; k < cnt; k++) {
-        if (rng() < 0.25) continue;
-        const aa = rot + (k / cnt) * TAU;
-        const x = cx + Math.cos(aa) * ringR;
-        const y = cy + Math.sin(aa) * ringR;
-        const r = rng.range(20, 30);
-        if (canPlace(x, y, r, 48)) obs.push({ x, y, r, k: 1 });
-      }
-      if (rng() < 0.55 && canPlace(cx, cy, 30, 70)) obs.push({ x: cx, y: cy, r: 30, k: 2 });
-    }
-    const rocks = Math.floor((R * R) / 100000);
-    for (let i = 0, tries = 0; i < rocks && tries < rocks * 25; tries++) {
-      const a = rng() * TAU;
-      const d = Math.sqrt(rng()) * (R - 120);
-      const x = Math.cos(a) * d;
-      const y = Math.sin(a) * d;
-      const r = rng.range(24, 62);
-      if (canPlace(x, y, r, 72)) {
-        obs.push({ x, y, r, k: rng() < 0.12 ? 2 : 0 });
-        i++;
-      }
-    }
-    // 오브 제단 3곳
-    const rot = rng() * TAU;
-    for (let i = 0; i < 3; i++) {
-      const a = rot + (i / 3) * TAU;
-      const d = R * 0.42;
-      const x = Math.round(Math.cos(a) * d);
-      const y = Math.round(Math.sin(a) * d);
-      for (let j = obs.length - 1; j >= 0; j--) if (dist2(x, y, obs[j].x, obs[j].y) < (obs[j].r + 190) ** 2) obs.splice(j, 1);
-      this.altars.push({ i, x, y, state: 'idle', guardian: 0 });
-    }
-    for (const o of obs) {
-      o.x = Math.round(o.x);
-      o.y = Math.round(o.y);
-      o.r = Math.round(o.r);
-    }
-    // 상자
-    for (let i = 0, tries = 0; i < C.CHEST_COUNT && tries < 2000; tries++) {
-      const a = rng() * TAU;
-      const d = Math.sqrt(rng()) * (R - 150);
-      const x = Math.round(Math.cos(a) * d);
-      const y = Math.round(Math.sin(a) * d);
-      if (this.blocked(x, y, 50)) continue;
-      if (this.chests.some((c) => dist2(x, y, c.x, c.y) < 260 * 260)) continue;
-      if (this.altars.some((s) => dist2(x, y, s.x, s.y) < 200 * 200)) continue;
-      this.chests.push({ id: this.nextId++, x, y, open: false, respawnT: 0 });
-      i++;
-    }
   }
 
   mapInfo() {
     return {
+      id: this.mapId,
+      name: this.map.name,
       R: this.R,
       obstacles: this.obstacles.map((o) => [o.x, o.y, o.r, o.k]),
+      walls: this.walls,
       altars: this.altars.map((a) => [a.i, a.x, a.y]),
+      camps: this.camps.map((c) => [c.id, c.x, c.y, c.type]),
       seed: this.seed,
       matchTime: C.MATCH_TIME,
     };
@@ -446,8 +389,8 @@ export class Game {
       p.comboT -= dt;
       if (p.comboT <= 0) p.combo = 0;
     }
-    for (const k of ['s1', 's2', 'e', 'space']) if (p.cd[k] > 0) p.cd[k] -= dt;
-    p.ult = Math.min(100, p.ult + C.ULT_PASSIVE * dt);
+    for (const k of ['q', 'w', 'e', 'd', 'f']) if (p.cd[k] > 0) p.cd[k] -= dt;
+    p.ult = Math.min(100, p.ult + C.ULT_PASSIVE * dt * (p.orbs.includes(2) ? 2 : 1));
     if (p.buffer) {
       p.buffer.t -= dt;
       if (p.buffer.t <= 0) p.buffer = null;
@@ -461,17 +404,18 @@ export class Game {
       return false;
     };
     // 이동기와 생존기는 다른 행동을 끊고 즉시 사용
-    if (pressed(PRESS.space) && !this.tryBoots(p)) p.buffer = { k: 'space', t: 0.15 };
-    if (pressed(PRESS.e)) this.tryArmor(p);
-    if (pressed(PRESS.f)) this.interact(p);
-    for (const key of ['s1', 's2', 'ult']) {
+    if (pressed(PRESS.d)) this.trySpell(p, 'd');
+    if (pressed(PRESS.f)) this.trySpell(p, 'f');
+    if (pressed(PRESS.act)) this.interact(p, inp.ti);
+    if (p.wantAct) this.tryWantAct(p, dt);
+    for (const key of ['q', 'w', 'e', 'r']) {
       if (pressed(PRESS[key]) && !this.trySkill(p, key)) p.buffer = { k: key, t: 0.3 };
     }
     const newAtk = pressed(PRESS.atk);
     if ((newAtk || inp.atk) && !this.tryBasic(p) && newAtk) p.buffer = { k: 'atk', t: 0.25 };
     if (p.buffer && this.canAct(p)) {
       const k = p.buffer.k;
-      const ok = k === 'atk' ? this.tryBasic(p) : k === 'space' ? this.tryBoots(p) : this.trySkill(p, k);
+      const ok = k === 'atk' ? this.tryBasic(p) : this.trySkill(p, k);
       if (ok) p.buffer = null;
     }
 
@@ -492,7 +436,7 @@ export class Game {
         return;
       }
     }
-    if (!p.outside && !p.orbs.length && p.hp < p.maxHp && this.time - p.lastDmgT > C.REGEN_DELAY) {
+    if (!p.outside && p.hp < p.maxHp && this.time - p.lastDmgT > C.REGEN_DELAY) {
       p.hp = Math.min(p.maxHp, p.hp + p.maxHp * C.REGEN_RATE * dt);
     }
   }
@@ -525,45 +469,49 @@ export class Game {
   recomputeStats(p) {
     const armor = ARMORS[p.gear.armor.type];
     const ratio = p.maxHp > 0 ? p.hp / p.maxHp : 1;
-    p.maxHp = Math.round(C.BASE_HP * C.levelMult(p.level) * armor.hpMult * RARITIES[p.gear.armor.rarity].mult);
+    p.maxHp = Math.round(C.BASE_HP * C.levelMult(p.level) * armor.hpMult * RARITIES[p.gear.armor.rarity].mult * (1 + C.ORB_HP_PER * p.orbs.length));
     p.hp = Math.min(p.maxHp, Math.max(1, ratio * p.maxHp));
-    const bootMult = RARITIES[p.gear.boots.rarity].mult;
-    p.speedMult = armor.speedMult * (1 + (bootMult - 1) * 0.5) * (1 - C.ORB_SLOW * p.orbs.length);
-    p.cdMult = p.orbs.includes(2) ? 0.8 : 1;
-    p.spaceCdMult = p.cdMult / bootMult;
+    const boots = BOOTS[p.gear.boots.type];
+    const bm = RARITIES[p.gear.boots.rarity].mult;
+    p.speedMult = armor.speedMult * (1 + boots.speed * bm) * (1 + C.ORB_SPEED_PER * p.orbs.length);
+    p.cdMult = (p.orbs.includes(2) ? 0.7 : 1) * (1 - boots.cdr * bm);
+    p.dr = boots.dr * bm;
     p.uiVer++;
   }
 
   // ---------------- 상자/장비 ----------------
-  interact(p) {
-    if (!p.alive || p.st.stunT > 0) return;
-    let best = null;
-    let bestD = C.INTERACT_RANGE ** 2;
-    for (const it of this.items) {
-      const d = dist2(it.x, it.y, p.x, p.y);
-      if (d < bestD) {
-        bestD = d;
-        best = it;
-      }
-    }
-    if (best) {
-      this.equip(p, best);
+  // 우클릭으로 고른 상자/장비. 멀면 걸어가는 동안 기억해 두었다가 닿으면 실행
+  interact(p, targetId) {
+    if (!p.alive) return;
+    if (targetId) {
+      p.wantAct = { id: targetId, t: 4 };
       return;
     }
-    let chest = null;
-    bestD = C.INTERACT_RANGE ** 2;
     for (const c of this.chests) {
-      if (c.open) continue;
-      const d = dist2(c.x, c.y, p.x, p.y);
-      if (d < bestD) {
-        bestD = d;
-        chest = c;
-      }
+      if (!c.open && dist2(c.x, c.y, p.x, p.y) < C.INTERACT_RANGE ** 2) return this.startChannel(p, c);
     }
-    if (chest && !p.act) {
-      p.channel = { id: chest.id, t: 0 };
-      this.breakStealth(p);
+  }
+
+  tryWantAct(p, dt) {
+    const w = p.wantAct;
+    w.t -= dt;
+    const it = this.items.find((g) => g.id === w.id);
+    const c = it ? null : this.chests.find((q) => q.id === w.id && !q.open);
+    const tgt = it || c;
+    if (!tgt || w.t <= 0) {
+      p.wantAct = null;
+      return;
     }
+    if (p.st.stunT > 0 || dist2(tgt.x, tgt.y, p.x, p.y) > C.INTERACT_RANGE ** 2) return;
+    p.wantAct = null;
+    if (it) this.equip(p, it);
+    else this.startChannel(p, c);
+  }
+
+  startChannel(p, c) {
+    if (p.act || p.st.stunT > 0) return;
+    p.channel = { id: c.id, t: 0 };
+    this.breakStealth(p);
   }
 
   updateChannel(p, dt) {
@@ -597,14 +545,26 @@ export class Game {
 
   equip(p, gi) {
     const kind = gi.item.kind;
+    if (kind === 'skill') {
+      // 스킬 각인: 더 높은 등급일 때만 사용 (소모)
+      const slot = gi.item.type;
+      if (gi.item.rarity <= p.grade[slot]) {
+        this.emit({ e: 'equipfail', to: p.id });
+        return;
+      }
+      const beforeR = ultGrade(p.grade);
+      p.grade[slot] = gi.item.rarity;
+      this.items.splice(this.items.indexOf(gi), 1);
+      p.uiVer++;
+      this.emit({ e: 'equip', id: p.id, x: Math.round(p.x), y: Math.round(p.y), r: gi.item.rarity, s: slot });
+      const afterR = ultGrade(p.grade);
+      if (afterR > beforeR) this.emit({ e: 'setbonus', id: p.id, x: Math.round(p.x), y: Math.round(p.y), r: afterR });
+      return;
+    }
     const old = p.gear[kind];
     p.gear[kind] = gi.item;
     this.items.splice(this.items.indexOf(gi), 1);
     if (old) this.dropItem(old, p.x, p.y);
-    if (kind === 'weapon' && old && old.type !== gi.item.type) {
-      p.act = null;
-      p.combo = 0;
-    }
     this.recomputeStats(p);
     this.emit({ e: 'equip', id: p.id, x: Math.round(p.x), y: Math.round(p.y), r: gi.item.rarity });
   }
@@ -699,12 +659,18 @@ export class Game {
         killer.monsterKills++;
         this.dropSouls(u.x, u.y, u.xp * (1 + this.time / 300), u.type === 'guardian' ? 8 : 4);
       }
-      if (u.type === 'elite') this.dropItem(rollItem(this.rng, this.time, 0.15), u.x, u.y);
+      // 스킬 각인: 일반 몬스터도 낮은 확률로, 엘리트는 확정(높은 등급)
+      const runeChance = { shade: 0.05, archer: 0.06, brute: 0.2, elite: 1, guardian: 1 }[u.type] || 0;
+      if (killer && this.rng() < runeChance) {
+        const bonus = u.type === 'guardian' ? 0.5 : u.type === 'elite' ? 0.2 : 0;
+        const slot = ['q', 'w', 'e'][Math.floor(this.rng() * 3)];
+        this.dropItem(makeItem('skill', slot, Math.max(1, rollRarity(this.rng, this.time, bonus))), u.x, u.y);
+      }
       if (u.altar != null) this.onGuardianDeath(u);
       return;
     }
     u.deaths++;
-    u.respawnT = C.respawnDelay(this.time);
+    u.respawnT = C.respawnDelay(this.time, u.level);
     u.act = null;
     u.channel = null;
     u.dashT = 0;
@@ -723,12 +689,11 @@ export class Game {
     u.ritualT = -1;
     for (const i of u.orbs) this.dropOrb(i, u.x, u.y);
     u.orbs = [];
-    // 가장 좋은 장비 1개 (무기 제외)
-    const cands = ['armor', 'boots'].filter((k) => u.gear[k].rarity >= 1).sort((a, b) => u.gear[b].rarity - u.gear[a].rarity);
-    if (cands.length) {
-      const k = cands[0];
-      this.dropItem(u.gear[k], u.x, u.y);
-      u.gear[k] = makeItem(k, k === 'armor' ? 'cloth' : 'swift', 0);
+    // 사망 패널티: 가장 높은 등급의 스킬 하나가 한 단계 강등
+    const top = ['q', 'w', 'e'].sort((a, b) => u.grade[b] - u.grade[a])[0];
+    if (u.grade[top] > 0) {
+      u.grade[top]--;
+      this.emit({ e: 'demote', to: u.id, s: top, r: u.grade[top] });
     }
     this.recomputeStats(u);
     let multi = 0;
@@ -869,80 +834,39 @@ export class Game {
   }
 
   // ---------------- 몬스터 ----------------
-  monsterCount() {
-    let n = 0;
-    for (const m of this.monsters) if (m.alive && (m.type === 'shade' || m.type === 'archer' || m.type === 'brute')) n++;
-    return n;
-  }
-
-  monsterTarget() {
-    const frac = this.zone && this.zone.active ? (this.zone.r / this.R) ** 2 : 1;
-    return Math.round((10 + 3.2 * this.startCount) * clamp(frac, 0.15, 1));
-  }
-
-  eliteTarget() {
-    return 3 + Math.floor(this.startCount / 4);
+  // ---------------- 정글 캠프 ----------------
+  spawnCamp(c) {
+    const def = CAMP_TYPES[c.type];
+    c.mobs = def.mobs.map((t, i) => {
+      const a = (i / def.mobs.length) * TAU;
+      const m = this.spawnMonster(t, c.x + Math.cos(a) * (def.mobs.length > 1 ? 45 : 0), c.y + Math.sin(a) * (def.mobs.length > 1 ? 45 : 0), { camp: c.id });
+      return m.id;
+    });
+    c.alive = true;
   }
 
   updateSpawns(dt) {
-    this.spawnT -= dt;
-    if (this.spawnT <= 0) {
-      this.spawnT = 0.7;
-      if (this.monsterCount() < this.monsterTarget()) this.trySpawnGroup(false);
-    }
-    this.eliteT -= dt;
-    if (this.eliteT <= 0) {
-      this.eliteT = 30;
-      let n = 0;
-      for (const m of this.monsters) if (m.alive && m.type === 'elite') n++;
-      if (n < this.eliteTarget()) this.spawnElite();
-    }
-  }
-
-  randomOpenSpot(minPlayerD, pad = 70) {
     const z = this.zone;
-    const maxR = z && z.active ? z.r * 0.9 : this.R * 0.92;
-    const cx = z && z.active ? z.x : 0;
-    const cy = z && z.active ? z.y : 0;
-    for (let tries = 0; tries < 16; tries++) {
-      const a = this.rng() * TAU;
-      const d = Math.sqrt(this.rng()) * maxR;
-      const x = cx + Math.cos(a) * d;
-      const y = cy + Math.sin(a) * d;
-      if (x * x + y * y > (this.R - 90) ** 2 || this.blocked(x, y, pad)) continue;
-      let ok = true;
-      for (const p of this.players.values()) {
-        if (p.alive && dist2(x, y, p.x, p.y) < minPlayerD * minPlayerD) {
-          ok = false;
-          break;
+    for (const c of this.camps) {
+      if (c.alive) {
+        if (c.mobs.every((id) => {
+          const m = this.byId.get(id);
+          return !m || !m.alive;
+        })) {
+          c.alive = false;
+          c.respawnT = CAMP_TYPES[c.type].respawn;
+          this.emit({ e: 'campclear', id: c.id, x: c.x, y: c.y });
         }
+        continue;
       }
-      if (!ok) continue;
-      if (this.altars.some((s) => dist2(x, y, s.x, s.y) < 240 * 240)) continue;
-      return [x, y];
+      c.respawnT -= dt;
+      if (c.respawnT > 0) continue;
+      if (z.active && dist2(c.x, c.y, z.x, z.y) > (z.r - 80) ** 2) continue;
+      // 바로 옆에 플레이어가 있으면 기다림
+      let near = false;
+      for (const p of this.players.values()) if (p.alive && dist2(p.x, p.y, c.x, c.y) < 260 * 260) near = true;
+      if (!near) this.spawnCamp(c);
     }
-    return null;
-  }
-
-  trySpawnGroup(initial) {
-    const spot = this.randomOpenSpot(initial ? 360 : 520);
-    if (!spot) return false;
-    const [x, y] = spot;
-    const rng = this.rng;
-    const roll = rng();
-    let group;
-    if (roll < 0.42) group = ['shade', 'shade', 'shade'];
-    else if (roll < 0.68) group = ['shade', 'shade', 'archer'];
-    else if (roll < 0.84) group = ['archer', 'archer', 'shade'];
-    else group = ['brute', 'shade'];
-    if (rng() < 0.3) group.push('shade');
-    for (const t of group) this.spawnMonster(t, x + rng.range(-55, 55), y + rng.range(-55, 55));
-    return true;
-  }
-
-  spawnElite() {
-    const spot = this.randomOpenSpot(450);
-    if (spot) this.spawnMonster('elite', spot[0], spot[1]);
   }
 
   spawnMonster(type, x, y, extra = {}) {
@@ -981,6 +905,7 @@ export class Game {
       moveSpeed: 0,
       xp: def.xp,
       ringT: 2.5,
+      leash: extra.camp ? 420 : def.leash || 900,
       altar: extra.altar ?? null,
       tele: null,
       invulnT: 0,
@@ -1033,10 +958,18 @@ export class Game {
   }
 
   // ---------------- 스냅샷 ----------------
+  // 죽어 있는 동안: 고른 대상 → 오브 보유자 → 나를 죽인 사람 순으로 관전
   spectateTarget(me) {
     let t = me.specId ? this.players.get(me.specId) : null;
     if (t && t.alive) return t;
-    return null;
+    t = null;
+    for (const p of this.players.values()) if (p.alive && p.orbs.length && (!t || p.orbs.length > t.orbs.length)) t = p;
+    if (!t && me.killerId) {
+      const k = this.players.get(me.killerId);
+      if (k && k.alive) t = k;
+    }
+    me.specId = t ? t.id : 0;
+    return t;
   }
 
   playerFlags(p) {
@@ -1089,7 +1022,7 @@ export class Game {
       let actT = 0;
       if (p.act) {
         const a = p.act;
-        act = a.key === 'basic' ? 1 + (a.step || 0) : a.key === 's1' ? 4 : a.key === 's2' ? 5 : 6;
+        act = a.key === 'basic' ? 1 + (a.step || 0) : { q: 4, w: 5, e: 8, r: 6 }[a.key];
         actT = R(Math.min(1, a.t / a.dur) * 100);
       } else if (p.channel) {
         act = 7;
@@ -1107,7 +1040,7 @@ export class Game {
         act,
         actT,
         WI(p.gear.weapon.type),
-        p.gear.weapon.rarity,
+        ultGrade(p.grade),
         ARMOR_IDS.indexOf(p.gear.armor.type),
         BOOT_IDS.indexOf(p.gear.boots.type),
         p.orbs.length,
@@ -1205,8 +1138,8 @@ export class Game {
         lv: me.level,
         xp: Math.floor(me.xp),
         xn: me.xpNext,
-        cd: [me.cd.s1, me.cd.s2, me.cd.e, me.cd.space].map((v) => Math.max(0, R(v * 100) / 100)),
-        cdm: [me.cdMax.s1, me.cdMax.s2, me.cdMax.e, me.cdMax.space].map((v) => R(v * 100) / 100),
+        cd: [me.cd.q, me.cd.w, me.cd.e, me.cd.d, me.cd.f].map((v) => Math.max(0, R(v * 100) / 100)),
+        cdm: [me.cdMax.q, me.cdMax.w, me.cdMax.e, me.cdMax.d, me.cdMax.f].map((v) => R(v * 100) / 100),
         ult: R(me.ult),
         k: me.kills,
         d: me.deaths,
@@ -1224,6 +1157,8 @@ export class Game {
         m.ui = {
           v: me.uiVer,
           gear: { weapon: me.gear.weapon, armor: me.gear.armor, boots: me.gear.boots },
+          spells: me.spells,
+          grade: { ...me.grade, r: ultGrade(me.grade) },
           speedMult: me.speedMult,
         };
       }

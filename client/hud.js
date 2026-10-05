@@ -1,16 +1,17 @@
 // HUD: 체력/경험치, 스킬 쿨타임, 장비, 미니맵, 킬피드, 오브 현황, 알림
 import * as C from '../shared/constants.js';
-import { WEAPONS, ARMORS, BOOTS, RARITIES, ORBS, itemDef, itemName, KIND_NAMES } from '../shared/items.js';
+import { WEAPONS, ARMORS, BOOTS, SPELLS, RARITIES, ORBS, itemDef, itemName, KIND_NAMES } from '../shared/items.js';
 
 const $ = (id) => document.getElementById(id);
 
 const SLOTS = [
   { k: 'basic', key: '좌클릭' },
-  { k: 's1', key: '우클릭' },
-  { k: 's2', key: 'Q' },
-  { k: 'ult', key: 'R' },
+  { k: 'q', key: 'Q' },
+  { k: 'w', key: 'W' },
   { k: 'e', key: 'E' },
-  { k: 'space', key: 'Space' },
+  { k: 'r', key: 'R' },
+  { k: 'd', key: 'D', spell: true },
+  { k: 'f', key: 'F', spell: true },
 ];
 
 function fmtTime(s) {
@@ -37,7 +38,7 @@ export class Hud {
     wrap.innerHTML = '';
     for (const s of SLOTS) {
       const d = document.createElement('div');
-      d.className = `slot slot-${s.k}`;
+      d.className = `slot slot-${s.k}${s.spell ? ' spell' : ''}`;
       d.innerHTML = `<div class="slot-icon"></div><div class="slot-cd"></div><div class="slot-cdtext"></div><div class="slot-key">${s.key}</div><div class="slot-tip"><b></b><span></span></div>`;
       wrap.appendChild(d);
       this.slotEls[s.k] = d;
@@ -60,31 +61,34 @@ export class Hud {
   // 장비가 바뀌면 스킬 아이콘/설명 갱신
   refreshGear(ui) {
     const w = WEAPONS[ui.gear.weapon.type];
-    const a = ARMORS[ui.gear.armor.type];
-    const b = BOOTS[ui.gear.boots.type];
-    const set = (k, icon, name, desc, color) => {
+    const g = ui.grade || { q: 0, w: 0, e: 0, r: 0 };
+    const set = (k, icon, name, desc, color, grade = -1) => {
       const el = this.slotEls[k];
       el.querySelector('.slot-icon').textContent = icon;
-      el.querySelector('.slot-tip b').textContent = name;
+      el.querySelector('.slot-tip b').textContent = grade >= 0 ? `${name} · ${RARITIES[grade].name}` : name;
       el.querySelector('.slot-tip span').textContent = desc;
       el.style.setProperty('--slot-color', color);
+      el.style.setProperty('--grade', grade >= 0 ? RARITIES[grade].color : 'transparent');
+      el.classList.toggle('graded', grade > 0);
     };
     set('basic', w.icon, w.basic.name, w.basic.desc, w.color);
-    set('s1', '✦', w.s1.name, `${w.s1.desc} · ${w.s1.cd}초`, w.color);
-    set('s2', '✧', w.s2.name, `${w.s2.desc} · ${w.s2.cd}초`, w.color);
-    set('ult', '★', w.ult.name, w.ult.desc, '#ffd45a');
-    set('e', a.icon, a.skill.name, `${a.skill.desc} · ${a.skill.cd}초`, '#9fe8ff');
-    set('space', b.icon, b.skill.name, `${b.skill.desc} · ${b.skill.cd}초`, '#ffe9a8');
+    for (const k of ['q', 'w', 'e']) set(k, k.toUpperCase(), w[k].name, `${w[k].desc} · ${w[k].cd}초`, w.color, g[k]);
+    set('r', '★', w.r.name, `${w.r.desc}${g.r ? '' : ' · Q·W·E가 모두 희귀 이상이면 등급 상승(세트 효과)'}`, '#ffd45a', g.r);
+    ui.spells.forEach((id, i) => {
+      const sp = SPELLS[id];
+      set(i ? 'f' : 'd', sp.icon, sp.name, `${sp.desc} · ${sp.cd}초`, '#9fe8ff');
+    });
     const gear = $('gear');
     gear.innerHTML = '';
-    for (const kind of ['weapon', 'armor', 'boots']) {
+    for (const kind of ['armor', 'boots']) {
       const it = ui.gear[kind];
       const d = itemDef(it);
       const rc = RARITIES[it.rarity];
       const el = document.createElement('div');
       el.className = 'gear-item';
       el.style.setProperty('--rc', rc.color);
-      el.innerHTML = `<span class="gi-icon">${d.icon}</span><span class="gi-text"><small>${KIND_NAMES[kind]}</small>${rc.name} ${d.name}</span>`;
+      el.title = d.desc;
+      el.innerHTML = `<span class="gi-icon">${d.icon}</span><span class="gi-text"><small>${KIND_NAMES[kind]} · ${d.desc}</small>${rc.name} ${d.name}</span>`;
       gear.appendChild(el);
     }
   }
@@ -97,7 +101,7 @@ export class Hud {
       this.refreshGear(game.ui);
     }
     // 매 프레임: 쿨타임 오버레이 (부드럽게)
-    const cds = { s1: [me.cd[0], me.cdm[0]], s2: [me.cd[1], me.cdm[1]], e: [me.cd[2], me.cdm[2]], space: [me.cd[3], me.cdm[3]] };
+    const cds = { q: [me.cd[0], me.cdm[0]], w: [me.cd[1], me.cdm[1]], e: [me.cd[2], me.cdm[2]], d: [me.cd[3], me.cdm[3]], f: [me.cd[4], me.cdm[4]] };
     for (const [k, [cd, max]] of Object.entries(cds)) {
       const el = this.slotEls[k];
       const frac = cd > 0 && max > 0 ? cd / max : 0;
@@ -105,7 +109,7 @@ export class Hud {
       el.classList.toggle('cooling', cd > 0);
       el.querySelector('.slot-cdtext').textContent = cd > 0 ? (cd < 1 ? cd.toFixed(1) : Math.ceil(cd)) : '';
     }
-    const ultEl = this.slotEls.ult;
+    const ultEl = this.slotEls.r;
     ultEl.style.setProperty('--cd', ((100 - me.ult) / 100).toFixed(3));
     ultEl.classList.toggle('cooling', me.ult < 100);
     ultEl.classList.toggle('ready', me.ult >= 100);
@@ -184,7 +188,7 @@ export class Hud {
       return;
     }
     let best = null;
-    let bd = C.INTERACT_RANGE * C.INTERACT_RANGE;
+    let bd = 110 * 110;
     for (const it of v.items) {
       const d = (it.x - me.x) ** 2 + (it.y - me.y) ** 2;
       if (d < bd) {
@@ -194,18 +198,24 @@ export class Hud {
     }
     let html = '';
     if (best) {
-      const cur = game.ui.gear[best.kind];
       const rc = RARITIES[best.rarity];
-      const better = best.rarity > cur.rarity ? '<em class="up">▲</em>' : best.rarity < cur.rarity ? '<em class="down">▼</em>' : '';
-      html = `<kbd>F</kbd> 장착: <b style="color:${rc.color}">${rc.name} ${best.name}</b> ${better}<small>현재: ${itemName(cur)}</small>`;
-      if (best.kind === 'weapon' && best.type !== cur.type) html += `<small>무기가 바뀌면 스킬 구성이 바뀝니다</small>`;
+      if (best.kind === 'skill') {
+        const cg = game.ui.grade[best.type];
+        const w = WEAPONS[game.ui.gear.weapon.type][best.type];
+        const ok = best.rarity > cg;
+        html = `<kbd>우클릭</kbd> <b style="color:${rc.color}">${rc.name} ${best.type.toUpperCase()} 각인</b> ${ok ? '<em class="up">▲</em>' : '<em class="down">사용 불가</em>'}<small>${w.name}: ${RARITIES[cg].name} → ${rc.name}</small>`;
+      } else {
+        const cur = game.ui.gear[best.kind];
+        const better = best.rarity > cur.rarity ? '<em class="up">▲</em>' : best.rarity < cur.rarity ? '<em class="down">▼</em>' : '';
+        html = `<kbd>우클릭</kbd> 장착: <b style="color:${rc.color}">${rc.name} ${best.name}</b> ${better}<small>현재: ${itemName(cur)}</small>`;
+      }
     } else {
       for (const c of v.chests) {
         if (c.open) continue;
         const d = (c.x - me.x) ** 2 + (c.y - me.y) ** 2;
         if (d < bd) {
           bd = d;
-          html = '<kbd>F</kbd> 상자 열기 <small>1초 동안 멈춰 있어야 함 · 맞으면 끊김</small>';
+          html = '<kbd>우클릭</kbd> 상자 열기 <small>1초 동안 멈춰 있어야 함 · 맞으면 끊김</small>';
         }
       }
     }

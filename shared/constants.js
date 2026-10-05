@@ -30,15 +30,18 @@ export const BASE_HP = 1000;
 export const BASE_SPEED = 250;
 export const LEVEL_MAX = 15;
 export const LEVEL_BONUS = 0.015; // 레벨당 체력·피해 (15레벨 = ×1.21)
-export const RESPAWN_BASE = 5;
-export const RESPAWN_PER_MIN = 0.7;
-export const RESPAWN_MAX = 12;
+export const RESPAWN_BASE = 8;
+export const RESPAWN_PER_MIN = 1.2;
+export const RESPAWN_PER_LEVEL = 1;
+export const RESPAWN_MAX = 30;
 export const RESPAWN_PROTECT = 2;
 export const SPAWN_PROTECT = 3;
 export const REGEN_DELAY = 6;
 export const REGEN_RATE = 0.02;
 export const KILL_HEAL = 0.25;
-export const ORB_SLOW = 0.05;
+// 오브 보유 효과: 페널티는 위치 공개(시야 공유)뿐, 대신 확실한 이득
+export const ORB_HP_PER = 0.08; // 오브 1개당 최대 체력 +8%
+export const ORB_SPEED_PER = 0.04; // 오브 1개당 이동 속도 +4%
 
 // 전투 규칙
 export const CC_MAX = 1;
@@ -57,8 +60,9 @@ export const CHEST_OPEN = 1.0;
 export const CHEST_RESPAWN = 60;
 export const INTERACT_RANGE = 70;
 
-// 입력 누름 횟수 카운터 인덱스: [공격, 스킬1, 스킬2, 궁, E, Space, F]
-export const PRESS = { atk: 0, s1: 1, s2: 2, ult: 3, e: 4, space: 5, f: 6 };
+// 입력 누름 횟수 카운터 인덱스: [좌클릭 공격, Q, W, E, R, D, F, 상호작용(우클릭으로 상자/장비)]
+export const PRESS = { atk: 0, q: 1, w: 2, e: 3, r: 4, d: 5, f: 6, act: 7 };
+export const PRESS_N = 8;
 
 // 경험치
 export const XP_ORB_MAGNET = 140;
@@ -74,8 +78,9 @@ export function levelMult(level) {
   return 1 + LEVEL_BONUS * (level - 1);
 }
 
-export function respawnDelay(time) {
-  return Math.min(RESPAWN_MAX, RESPAWN_BASE + (time / 60) * RESPAWN_PER_MIN);
+// 롤식: 시간이 지날수록, 레벨이 높을수록 길어짐 (초반 8초 → 후반 최대 30초)
+export function respawnDelay(time, level = 1) {
+  return Math.min(RESPAWN_MAX, RESPAWN_BASE + (time / 60) * RESPAWN_PER_MIN + (level - 1) * RESPAWN_PER_LEVEL);
 }
 
 export function mapRadiusFor(n) {

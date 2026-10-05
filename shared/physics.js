@@ -1,6 +1,18 @@
 // 이동/충돌. 서버 시뮬레이션과 클라이언트 이동 예측이 같은 함수를 사용해야
 // 예측 오차가 생기지 않는다.
 import { KB_DAMP } from './constants.js';
+import { segSegDist2 } from './math.js';
+
+// 벽: [x1, y1, x2, y2, 두께] 선분(캡슐). obstacles 배열의 .walls 속성으로 함께 전달
+export function wallBlocked(x1, y1, x2, y2, walls, pad = 0) {
+  if (!walls) return false;
+  for (let i = 0; i < walls.length; i++) {
+    const w = walls[i];
+    const rr = w[4] / 2 + pad;
+    if (segSegDist2(x1, y1, x2, y2, w[0], w[1], w[2], w[3]) < rr * rr) return true;
+  }
+  return false;
+}
 
 // 대시/돌진 시작 (서버/예측 공용): 넉백은 대부분 상쇄
 export function startDash(b, dx, dy, time, dist) {
@@ -29,6 +41,31 @@ export function resolveStatic(u, obstacles, R) {
       hit = true;
     }
   }
+  const walls = obstacles.walls;
+  if (walls) {
+    for (let i = 0; i < walls.length; i++) {
+      const w = walls[i];
+      const ax = w[0];
+      const ay = w[1];
+      const ex = w[2] - ax;
+      const ey = w[3] - ay;
+      const len2 = ex * ex + ey * ey;
+      let t = len2 > 0 ? ((u.x - ax) * ex + (u.y - ay) * ey) / len2 : 0;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const px = ax + ex * t;
+      const py = ay + ey * t;
+      const dx = u.x - px;
+      const dy = u.y - py;
+      const minD = u.r + w[4] / 2;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < minD * minD) {
+        const d = Math.sqrt(d2) || 0.0001;
+        u.x += (dx / d) * (minD - d);
+        u.y += (dy / d) * (minD - d);
+        hit = true;
+      }
+    }
+  }
   const d = Math.sqrt(u.x * u.x + u.y * u.y);
   const maxD = R - u.r;
   if (d > maxD) {
@@ -47,24 +84,26 @@ export function stepBody(b, mx, my, speed, dt, obstacles, R) {
     mx /= len;
     my /= len;
   }
+  let dx = 0;
+  let dy = 0;
   if (b.dashT > 0) {
     const t = Math.min(dt, b.dashT);
     const sp = b.dashSpd;
-    b.x += b.ddx * sp * t;
-    b.y += b.ddy * sp * t;
+    dx += b.ddx * sp * t;
+    dy += b.ddy * sp * t;
     b.dashT -= dt;
     const rest = dt - t;
     if (rest > 0) {
-      b.x += mx * speed * rest;
-      b.y += my * speed * rest;
+      dx += mx * speed * rest;
+      dy += my * speed * rest;
     }
   } else {
-    b.x += mx * speed * dt;
-    b.y += my * speed * dt;
+    dx += mx * speed * dt;
+    dy += my * speed * dt;
   }
   if (b.kbx !== 0 || b.kby !== 0) {
-    b.x += b.kbx * dt;
-    b.y += b.kby * dt;
+    dx += b.kbx * dt;
+    dy += b.kby * dt;
     const f = Math.exp(-KB_DAMP * dt);
     b.kbx *= f;
     b.kby *= f;
@@ -73,7 +112,16 @@ export function stepBody(b, mx, my, speed, dt, obstacles, R) {
       b.kby = 0;
     }
   }
-  return resolveStatic(b, obstacles, R);
+  // 빠른 이동(대시·넉백)이 얇은 벽을 뚫지 않도록 잘게 나눠 이동
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  const n = Math.max(1, Math.ceil(dist / 18));
+  let hit = false;
+  for (let i = 0; i < n; i++) {
+    b.x += dx / n;
+    b.y += dy / n;
+    if (resolveStatic(b, obstacles, R)) hit = true;
+  }
+  return hit;
 }
 
 // 유닛끼리 겹침 밀어내기 (서버 전용). 대시 중인 유닛은 통과

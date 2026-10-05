@@ -1,13 +1,13 @@
 // 게임 화면: 스냅샷 수신, 이동 예측/보정, 보간, 이벤트 → 이펙트/사운드
 import * as C from '../shared/constants.js';
 import { stepBody, startDash, resolveStatic } from '../shared/physics.js';
-import { WEAPONS, ARMORS, BOOTS, RARITIES, ORBS, WEAPON_IDS, ARMOR_IDS, BOOT_IDS, KIND_IDS, SLOT_KINDS, itemDef } from '../shared/items.js';
+import { WEAPONS, ARMORS, BOOTS, SPELLS, RARITIES, ORBS, WEAPON_IDS, ARMOR_IDS, BOOT_IDS, KIND_IDS, SLOT_KINDS, itemDef } from '../shared/items.js';
 import { MONSTER_TYPES } from '../shared/monsters.js';
 import { PROJ_KINDS, AREA_KINDS, ALTAR_STATE, PF } from '../shared/sim.js';
 import { COSMETIC_MAP } from '../shared/cosmetics.js';
 import { play } from './audio.js';
 
-const KIND_NAMES = ['weapon', 'armor', 'boots'];
+const KIND_NAMES = ['skill', 'armor', 'boots'];
 
 function lerpAngle(a, b, t) {
   let d = (b - a) % (Math.PI * 2);
@@ -101,12 +101,22 @@ export class GameClient {
   start(m) {
     this.meId = m.you;
     this.mode = m.mode;
+    const obstacles = m.map.obstacles.map((o) => ({ x: o[0], y: o[1], r: o[2], k: o[3] }));
+    obstacles.walls = m.map.walls;
     this.map = {
+      id: m.map.id,
+      name: m.map.name,
       R: m.map.R,
-      obstacles: m.map.obstacles.map((o) => ({ x: o[0], y: o[1], r: o[2], k: o[3] })),
+      obstacles,
+      walls: m.map.walls,
       altars: m.map.altars.map((a) => ({ i: a[0], x: a[1], y: a[2] })),
+      camps: (m.map.camps || []).map((c) => ({ id: c[0], x: c[1], y: c[2], type: c[3] })),
       matchTime: m.map.matchTime,
     };
+    this.moveTarget = null;
+    this.moveMarker = null;
+    this.hitstop = 0;
+    this.frozenView = null;
     this.roster.clear();
     for (const r of m.roster) this.roster.set(r[0], { name: r[1], cos: r[2], bot: r[3] });
     this.snaps = [];
@@ -116,8 +126,10 @@ export class GameClient {
     this.pred = null;
     this.hist = [];
     this.seq = 0;
-    this.input.counters = [0, 0, 0, 0, 0, 0, 0];
-    this.lastSpace = 0;
+    this.input.counters = new Array(C.PRESS_N).fill(0);
+    this.lastSpell = [0, 0];
+    this.interactTarget = 0;
+    this.input.onRightClick = (sx, sy) => this.rightClick(sx, sy);
     this.running = true;
     this.lastFrame = performance.now();
     this.acc = 0;
@@ -179,7 +191,7 @@ export class GameClient {
     const base = { x: me.x, y: me.y, r: C.PLAYER_R, kbx: me.kbx, kby: me.kby, dashT: me.dt, dashSpd: me.ds, ddx: me.ddx, ddy: me.ddy };
     while (this.hist.length && this.hist[0].seq <= me.ack) this.hist.shift();
     for (const h of this.hist) {
-      if (h.sp) this.applyBoots(base, h.sp);
+      if (h.sp) this.applyBlink(base, h.sp);
       stepBody(base, h.mx, h.my, h.speed, C.DT, this.map.obstacles, this.map.R);
     }
     if (this.pred) {
@@ -196,54 +208,113 @@ export class GameClient {
     this.pred = base;
   }
 
-  applyBoots(b, sp) {
-    if (sp.type === 'dash') startDash(b, sp.dx, sp.dy, sp.time, sp.dist);
-    else if (sp.type === 'blink') {
-      b.x += sp.dx * sp.dist;
-      b.y += sp.dy * sp.dist;
-      b.kbx = 0;
-      b.kby = 0;
-      resolveStatic(b, this.map.obstacles, this.map.R);
-    }
+  // 점멸 예측 (서버와 같은 규칙)
+  applyBlink(b, sp) {
+    b.x += sp.dx * sp.dist;
+    b.y += sp.dy * sp.dist;
+    b.kbx = 0;
+    b.kby = 0;
+    b.dashT = 0;
+    resolveStatic(b, this.map.obstacles, this.map.R);
   }
 
-  mouseWorld() {
+  mouseWorld(sx = this.input.mouseX, sy = this.input.mouseY) {
     const r = this.r;
-    return [r.cam.x + (this.input.mouseX - r.w / 2) / r.zoom, r.cam.y + (this.input.mouseY - r.h / 2) / r.zoom];
+    return [r.cam.x + (sx - r.w / 2) / r.zoom, r.cam.y + (sy - r.h / 2) / r.zoom];
+  }
+
+  // 우클릭: 상자/장비 위면 가서 열기·줍기, 아니면 그 지점으로 이동
+  rightClick(sx, sy) {
+    const [wx, wy] = this.mouseWorld(sx, sy);
+    const s = this.latest;
+    let target = null;
+    if (s) {
+      let bd = 45 * 45;
+      for (const g of s.it) {
+        const d = (g[4] - wx) ** 2 + (g[5] - wy) ** 2;
+        if (d < bd) {
+          bd = d;
+          target = { id: g[0], x: g[4], y: g[5] };
+        }
+      }
+      for (const c of s.ch) {
+        if (c[3]) continue;
+        const d = (c[1] - wx) ** 2 + (c[2] - wy) ** 2;
+        if (d < bd) {
+          bd = d;
+          target = { id: c[0], x: c[1], y: c[2] };
+        }
+      }
+    }
+    if (target) {
+      this.moveTarget = [target.x, target.y];
+      this.interactTarget = target.id;
+      this.input.counters[C.PRESS.act]++;
+      this.moveMarker = { x: target.x, y: target.y, t: 0, interact: true };
+    } else {
+      this.moveTarget = [wx, wy];
+      this.interactTarget = 0;
+      this.moveMarker = { x: wx, y: wy, t: 0 };
+    }
   }
 
   // 30Hz 고정: 입력 전송 + 내 이동 예측
   inputTick() {
-    const [mx, my] = this.input.move();
     const [wx, wy] = this.mouseWorld();
     const me = this.me;
     const px = this.pred ? this.pred.x : me ? me.x : 0;
     const py = this.pred ? this.pred.y : me ? me.y : 0;
+    // 우클릭을 누르고 있으면 계속 커서를 따라감 (롤과 동일)
+    if (this.input.rmb) this.moveTarget = [wx, wy];
+    if (this.input.stopPressed) {
+      this.moveTarget = null;
+      this.input.stopPressed = false;
+    }
+    let mx = 0;
+    let my = 0;
+    if (this.moveTarget) {
+      const dx = this.moveTarget[0] - px;
+      const dy = this.moveTarget[1] - py;
+      const d = Math.hypot(dx, dy);
+      const stopAt = this.interactTarget ? 40 : 6;
+      if (d > stopAt) {
+        mx = dx / d;
+        my = dy / d;
+        // 한 틱에 지나칠 거리면 속도를 줄여 정확히 멈춤
+        const step = (me ? me.ms : 250) * C.DT;
+        if (d < step) {
+          mx *= d / step;
+          my *= d / step;
+        }
+      } else {
+        this.moveTarget = null;
+      }
+    }
     const aim = Math.atan2(wy - py, wx - px);
     this.aim = aim;
     this.seq++;
     const p = this.input.counters.slice();
-    this.t.send({ t: 'in', s: this.seq, mx: Math.round(mx * 1000) / 1000, my: Math.round(my * 1000) / 1000, a: Math.round(aim * 1000) / 1000, k: this.input.lmb, cx: Math.round(wx), cy: Math.round(wy), p });
+    this.t.send({ t: 'in', s: this.seq, mx: Math.round(mx * 1000) / 1000, my: Math.round(my * 1000) / 1000, a: Math.round(aim * 1000) / 1000, k: this.input.lmb, cx: Math.round(wx), cy: Math.round(wy), ti: this.interactTarget, p });
     if (!me || !me.al || !this.pred || !this.ui) return;
     let speed = me.ms;
     const w = WEAPONS[this.ui.gear.weapon.type];
     if (this.input.lmb) speed *= w.basic.moveMult;
     if (me.chn >= 0) speed = 0;
+    // 점멸만 즉시 예측 (나머지 이동기는 서버 결과로 보정)
     let sp = null;
-    if (p[C.PRESS.space] > this.lastSpace) {
-      this.lastSpace = p[C.PRESS.space];
-      const boots = BOOTS[this.ui.gear.boots.type].skill;
-      const ready = me.cd[3] <= 0 && this.spaceLockT <= 0 && me.st !== 2 && (boots.type === 'sprint' || me.st !== 1);
-      if (ready && boots.type !== 'sprint') {
-        let dx = mx;
-        let dy = my;
-        if (Math.hypot(dx, dy) < 0.1) {
-          dx = Math.cos(aim);
-          dy = Math.sin(aim);
+    for (let i = 0; i < 2; i++) {
+      const idx = i === 0 ? C.PRESS.d : C.PRESS.f;
+      if (p[idx] > this.lastSpell[i]) {
+        this.lastSpell[i] = p[idx];
+        const spell = SPELLS[this.ui.spells[i]];
+        if (spell.type === 'blink' && me.cd[3 + i] <= 0 && me.st === 0) {
+          const dx = wx - this.pred.x;
+          const dy = wy - this.pred.y;
+          const len = Math.hypot(dx, dy) || 1;
+          sp = { dx: dx / len, dy: dy / len, dist: Math.min(spell.dist, len) };
+          this.applyBlink(this.pred, sp);
+          this.moveTarget = null;
         }
-        sp = { type: boots.type, dx, dy, time: boots.time, dist: boots.dist };
-        this.applyBoots(this.pred, sp);
-        this.spaceLockT = 0.4;
       }
     }
     stepBody(this.pred, mx, my, speed, C.DT, this.map.obstacles, this.map.R);
@@ -256,7 +327,6 @@ export class GameClient {
     const dt = Math.min(0.1, (now - this.lastFrame) / 1000);
     this.lastFrame = now;
     this.time += dt;
-    if (this.spaceLockT > 0) this.spaceLockT -= dt;
     this.acc += dt;
     while (this.acc >= C.DT) {
       this.acc -= C.DT;
@@ -266,9 +336,16 @@ export class GameClient {
     this.corr.x *= k;
     this.corr.y *= k;
     if (this.latest) {
-      const v = this.buildView(dt);
-      this.r.draw(v, dt);
-      this.hud.update(this, v, dt);
+      // 히트스톱: 타격 순간 화면을 아주 잠깐 멈춰 손맛을 줌
+      if (this.hitstop > 0 && this.frozenView) {
+        this.hitstop -= dt;
+        this.r.draw(this.frozenView, dt * 0.08);
+      } else {
+        const v = this.buildView(dt);
+        this.frozenView = v;
+        this.r.draw(v, dt);
+        this.hud.update(this, v, dt);
+      }
     }
     requestAnimationFrame(this.frame);
   }
@@ -292,7 +369,7 @@ export class GameClient {
     for (const [id, b] of s1.pl) {
       const a = s0.pl.get(id) || b;
       const info = this.roster.get(id) || { name: '?', cos: {} };
-      const p = { ...b, x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, aim: lerpAngle(a.aim, b.aim, k), name: info.name, cos: info.cos, me: id === this.meId };
+      const p = { ...b, x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, aim: lerpAngle(a.aim, b.aim, k), name: info.name, cos: info.cos, me: id === this.meId, vx: span > 0 ? (b.x - a.x) / span : 0, vy: span > 0 ? (b.y - a.y) / span : 0 };
       if (p.me) {
         const lp = latest.pl.get(id) || b;
         Object.assign(p, lp);
@@ -300,8 +377,15 @@ export class GameClient {
         p.name = info.name;
         p.cos = info.cos;
         if (this.pred) {
-          p.x = this.pred.x + this.corr.x;
-          p.y = this.pred.y + this.corr.y;
+          const nx = this.pred.x + this.corr.x;
+          const ny = this.pred.y + this.corr.y;
+          if (this.lastMe && dt > 0) {
+            p.vx = (nx - this.lastMe[0]) / dt;
+            p.vy = (ny - this.lastMe[1]) / dt;
+          }
+          this.lastMe = [nx, ny];
+          p.x = nx;
+          p.y = ny;
         }
         p.aim = this.aim ?? p.aim;
         p.orbIds = this.me ? this.me.ob : null;
@@ -402,6 +486,9 @@ export class GameClient {
       groundOrbs,
       carriers,
       meId: this.meId,
+      walls: this.map.walls,
+      camps: this.map.camps,
+      moveMarker: this.moveMarker,
       serverTime: latest.tm,
       scores: latest.sc,
     };
@@ -430,6 +517,9 @@ export class GameClient {
     switch (e.e) {
       case 'hit': {
         R.hitFlash(e.id);
+        const src = e.s ? this.findPlayer(e.s) || (this.latest && this.latest.mo.get(e.s)) : null;
+        if (src) R.recoil(e.id, e.x - src.x, e.y - src.y, e.b ? 12 : 7);
+        if ((e.s === this.meId || e.id === this.meId) && e.k !== 3 && e.k !== 6) this.hitstop = Math.max(this.hitstop, e.b ? 0.09 : e.a >= 100 ? 0.06 : 0.04);
         const toMe = e.id === this.meId;
         const byMe = e.s === this.meId;
         let color = '#d8d8e0';
@@ -466,7 +556,7 @@ export class GameClient {
         const v = this.vol(e.x, e.y) * (isMe ? 1 : 0.6);
         const w = WEAPONS[e.w];
         const sk = w[e.k];
-        if (e.k === 'ult') {
+        if (e.k === 'r') {
           play('ult', v);
           R.ring(e.x, e.y, 10, 90, w.color, 0.4, 6);
           if (isMe) R.text(e.x, e.y - 50, sk.name, '#ffd45a', 22, 1);
@@ -572,6 +662,7 @@ export class GameClient {
       case 'kill':
         this.hud.killfeed(this, e);
         if (e.k === this.meId) {
+          this.hitstop = 0.14;
           play('kill', 1);
           if (e.m >= 2) this.hud.announce(e.m === 2 ? '더블 킬!' : e.m === 3 ? '트리플 킬!' : '학살!', '#ff6b5a', 1.5);
         }
@@ -602,9 +693,33 @@ export class GameClient {
         play('chest', this.vol(e.x, e.y));
         break;
       case 'equip':
-        if (isMe) play('pickup', 1);
+        if (isMe) {
+          play('pickup', 1);
+          if (e.s) R.text(e.x, e.y - 50, `${e.s.toUpperCase()} ${RARITIES[e.r].name} 등급!`, RARITIES[e.r].color, 18, 1.2);
+        }
         R.burst(e.x, e.y, RARITIES[e.r].color, 10, 160, 4, 0.4);
         break;
+      case 'setbonus':
+        if (isMe) {
+          this.hud.announce(`세트 효과! R 스킬이 ${RARITIES[e.r].name} 등급으로`, RARITIES[e.r].color, 2.5);
+          R.pillar(e.x, e.y, RARITIES[e.r].color, 1, 60);
+          play('orb', 1);
+        }
+        break;
+      case 'demote':
+        this.hud.announce(`${e.s.toUpperCase()} 스킬이 ${RARITIES[e.r].name} 등급으로 강등`, '#ff6b5a', 2.5);
+        break;
+      case 'equipfail':
+        this.hud.announce('이미 같거나 더 높은 등급입니다', '#aaaaaa', 1.2);
+        break;
+      case 'spell': {
+        const v = this.vol(e.x, e.y);
+        if (e.k === 'purify') R.ring(e.x, e.y, 10, 70, '#ffffff', 0.4, 8);
+        else if (e.k === 'shadow') R.burst(e.x, e.y, '#6b5a8a', 24, 160, 7, 0.6, { glow: false });
+        else if (e.k === 'bulwark') R.ring(e.x, e.y, 30, 40, '#ffd678', 0.4, 6);
+        play(e.k === 'blink' ? 'blink' : e.k === 'sprint' ? 'dash' : 'shield', v);
+        break;
+      }
       case 'respawn':
         R.pillar(e.x, e.y, '#bfe9ff', 0.8, 44);
         if (isMe) {

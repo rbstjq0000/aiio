@@ -61,6 +61,9 @@ export class Renderer {
     this.fx = [];
     this.texts = [];
     this.flash = new Map();
+    this.recoils = new Map();
+    this.light = document.createElement('canvas');
+    this.lctx = this.light.getContext('2d');
     this.trails = new Map();
     this.floor = this.makeFloor();
     this.floorPattern = null;
@@ -135,6 +138,19 @@ export class Renderer {
     if (!this.settings.shake) return;
     this.shakeAmt = Math.min(22, Math.max(this.shakeAmt, a));
     this.shakeT = 0.25;
+  }
+
+  // 피격 반동: 맞은 방향으로 살짝 밀렸다 돌아옴
+  recoil(id, dx, dy, amt) {
+    const d = Math.hypot(dx, dy) || 1;
+    this.recoils.set(id, { x: (dx / d) * amt, y: (dy / d) * amt, t: 0.13 });
+  }
+
+  recoilOf(id) {
+    const r = this.recoils.get(id);
+    if (!r) return [0, 0];
+    const k = r.t / 0.13;
+    return [r.x * k, r.y * k];
   }
 
   hitFlash(id) {
@@ -220,6 +236,8 @@ export class Renderer {
 
     this.drawFloor(v);
     this.drawZone(v);
+    this.drawCamps(v);
+    this.drawMoveMarker(v, dt);
     this.drawAltars(v);
     this.drawChests(v);
     this.drawItems(v);
@@ -231,11 +249,18 @@ export class Renderer {
     const me = v.players.find((p) => p.me);
     if (me) this.drawPlayer(me, v);
     this.drawObstacles(v);
+    this.drawWalls(v);
     this.drawGroundOrbs(v);
     this.drawProjectiles(v);
     this.drawAreas(v, true);
     this.drawFx(ctx);
     this.drawParticles(ctx);
+    ctx.restore();
+    this.drawLighting(v);
+    ctx.save();
+    ctx.translate(w / 2 + sx, h / 2 + sy);
+    ctx.scale(zoom, zoom);
+    ctx.translate(-v.cam.x, -v.cam.y);
     for (const p of v.players) if (this.visible(p.x, p.y)) this.drawNameplate(p, v);
     for (const m of v.monsters) if (this.visible(m.x, m.y)) this.drawMonsterBar(m);
     this.drawTexts(ctx);
@@ -254,6 +279,10 @@ export class Renderer {
     if (this.shakeT > 0) {
       this.shakeT -= dt;
       if (this.shakeT <= 0) this.shakeAmt = 0;
+    }
+    for (const [id, r] of this.recoils) {
+      r.t -= dt;
+      if (r.t <= 0) this.recoils.delete(id);
     }
     for (const [id, t] of this.flash) {
       if (t - dt <= 0) this.flash.delete(id);
@@ -673,6 +702,133 @@ export class Renderer {
     }
   }
 
+  drawCamps(v) {
+    const ctx = this.ctx;
+    for (const c of v.camps || []) {
+      if (!this.visible(c.x, c.y, 120)) continue;
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, c.type === 'elite' ? 95 : 80, 0, TAU);
+      ctx.fillStyle = c.type === 'elite' ? 'rgba(177,140,255,0.06)' : 'rgba(255,255,255,0.025)';
+      ctx.fill();
+      ctx.setLineDash([6, 10]);
+      ctx.strokeStyle = c.type === 'elite' ? 'rgba(177,140,255,0.25)' : 'rgba(255,255,255,0.08)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+
+  // 우클릭 이동 지점 표시 (롤의 초록 화살표처럼)
+  drawMoveMarker(v, dt) {
+    const m = v.moveMarker;
+    if (!m) return;
+    m.t += dt;
+    if (m.t > 0.45) return;
+    const ctx = this.ctx;
+    const k = m.t / 0.45;
+    const col = m.interact ? '255,207,90' : '120,255,170';
+    ctx.save();
+    ctx.translate(m.x, m.y);
+    ctx.globalAlpha = 1 - k;
+    ctx.strokeStyle = `rgba(${col},1)`;
+    ctx.lineWidth = 3;
+    const r = 26 * (1 - k * 0.6);
+    for (let i = 0; i < 4; i++) {
+      ctx.rotate(Math.PI / 2);
+      ctx.beginPath();
+      ctx.moveTo(r, -7);
+      ctx.lineTo(r - 9, 0);
+      ctx.lineTo(r, 7);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  drawWalls(v) {
+    const ctx = this.ctx;
+    const walls = v.walls || [];
+    ctx.save();
+    ctx.lineCap = 'round';
+    // 그림자
+    ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+    for (const w of walls) {
+      if (!this.visible((w[0] + w[2]) / 2, (w[1] + w[3]) / 2, 200)) continue;
+      ctx.lineWidth = w[4] + 6;
+      ctx.beginPath();
+      ctx.moveTo(w[0] + 6, w[1] + 9);
+      ctx.lineTo(w[2] + 6, w[3] + 9);
+      ctx.stroke();
+    }
+    // 벽 몸체
+    for (const w of walls) {
+      if (!this.visible((w[0] + w[2]) / 2, (w[1] + w[3]) / 2, 200)) continue;
+      ctx.lineWidth = w[4];
+      ctx.strokeStyle = '#2b2438';
+      ctx.beginPath();
+      ctx.moveTo(w[0], w[1]);
+      ctx.lineTo(w[2], w[3]);
+      ctx.stroke();
+    }
+    // 윗면 하이라이트 + 희미한 룬
+    for (const w of walls) {
+      if (!this.visible((w[0] + w[2]) / 2, (w[1] + w[3]) / 2, 200)) continue;
+      ctx.lineWidth = w[4] * 0.55;
+      ctx.strokeStyle = '#463c5a';
+      ctx.beginPath();
+      ctx.moveTo(w[0], w[1] - 3);
+      ctx.lineTo(w[2], w[3] - 3);
+      ctx.stroke();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = 'rgba(94,242,214,0.18)';
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // 조명: 화면을 어둡게 덮고 빛나는 것 주변만 밝게
+  drawLighting(v) {
+    const lw = Math.ceil(this.w / 2);
+    const lh = Math.ceil(this.h / 2);
+    const L = this.light;
+    if (L.width !== lw || L.height !== lh) {
+      L.width = lw;
+      L.height = lh;
+    }
+    const g = this.lctx;
+    g.globalCompositeOperation = 'source-over';
+    g.clearRect(0, 0, lw, lh);
+    g.fillStyle = 'rgba(6,3,14,0.6)';
+    g.fillRect(0, 0, lw, lh);
+    g.globalCompositeOperation = 'destination-out';
+    const z = this.zoom / 2;
+    const toS = (x, y) => [(x - v.cam.x) * z + lw / 2, (y - v.cam.y) * z + lh / 2];
+    const hole = (x, y, r, a = 1) => {
+      const [sx, sy] = toS(x, y);
+      const rr = r * z;
+      if (sx < -rr || sy < -rr || sx > lw + rr || sy > lh + rr) return;
+      const gr = g.createRadialGradient(sx, sy, 0, sx, sy, rr);
+      gr.addColorStop(0, `rgba(0,0,0,${a})`);
+      gr.addColorStop(0.55, `rgba(0,0,0,${a * 0.6})`);
+      gr.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = gr;
+      g.fillRect(sx - rr, sy - rr, rr * 2, rr * 2);
+    };
+    for (const p of v.players) hole(p.x, p.y, p.me ? 560 : 230, p.me ? 1 : 0.8);
+    for (const q of v.projs) hole(q.x, q.y, 110, 0.6);
+    for (const o of v.map.obstacles) if (o.k === 2) hole(o.x, o.y, 300, 0.85);
+    for (const o of v.groundOrbs) hole(o.x, o.y, 340, 1);
+    for (const al of v.altars) if (al.state === 'warn' || al.state === 'guarded') hole(al.x, al.y, 380, 0.9);
+    for (const a of v.areas) if (a.t >= a.delay) hole(a.x, a.y, (a.kind === 'line' ? 200 : a.r) * 1.4, 0.7);
+    for (const c of v.chests) if (!c.open) hole(c.x, c.y, 110, 0.5);
+    for (const f of this.fx) if (f.k === 'ring' || f.k === 'pillar') hole(f.x, f.y, 220, 0.8 * (1 - f.t / f.dur));
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(L, 0, 0, this.w, this.h);
+    ctx.restore();
+  }
+
   // ---------------- 캐릭터 ----------------
   drawPlayer(p, v) {
     const ctx = this.ctx;
@@ -681,7 +837,8 @@ export class Renderer {
     const r = 18;
     const f = p.flags;
     ctx.save();
-    ctx.translate(p.x, p.y);
+    const [rx, ry] = this.recoilOf(p.id);
+    ctx.translate(p.x + rx, p.y + ry);
     if (f & PF.INVIS) ctx.globalAlpha = p.me ? 0.4 : 0.25;
     // 그림자
     ctx.fillStyle = 'rgba(0,0,0,0.4)';
@@ -717,29 +874,80 @@ export class Renderer {
       ctx.fill();
     }
     this.drawWeapon(p, r, t, false);
-    // 몸
+    // 몸: 위에서 본 망토 두른 영혼 전사
     const aim = p.aim;
+    const sp = Math.hypot(p.vx || 0, p.vy || 0);
+    const moving = sp > 20;
+    const mvA = moving ? Math.atan2(p.vy, p.vx) : aim;
+    const bob = moving ? Math.sin(t * 16 + p.id) * 1.2 : Math.sin(t * 3 + p.id) * 0.6;
+    const dark = mix(skin.body, '#000000', 0.5);
+    // 망토: 움직이는 반대쪽으로 펄럭임
+    const cl = r * (1.1 + Math.min(1, sp / 300) * 0.9);
+    const back = mvA + Math.PI;
+    const flap = Math.sin(t * 12 + p.id) * (moving ? 0.25 : 0.08);
+    ctx.save();
+    ctx.rotate(back + flap * 0.3);
     ctx.beginPath();
-    ctx.arc(0, 0, r, 0, TAU);
-    const g = ctx.createRadialGradient(Math.cos(aim) * 5 - 3, Math.sin(aim) * 5 - 5, 2, 0, 0, r);
-    g.addColorStop(0, skin.core);
-    g.addColorStop(0.45, skin.body);
-    g.addColorStop(1, mix(skin.body, '#000000', 0.45));
-    ctx.fillStyle = g;
+    ctx.moveTo(0, -r * 0.85);
+    ctx.quadraticCurveTo(cl * 0.7, -r * (0.9 + flap), cl, -r * 0.35 + flap * 8);
+    ctx.lineTo(cl * 0.92, r * 0.35 - flap * 8);
+    ctx.quadraticCurveTo(cl * 0.7, r * (0.9 - flap), 0, r * 0.85);
+    ctx.closePath();
+    const cg = ctx.createLinearGradient(0, 0, cl, 0);
+    cg.addColorStop(0, dark);
+    cg.addColorStop(1, mix(skin.body, '#000000', 0.7));
+    ctx.fillStyle = cg;
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = hexA(skin.rim, 0.5);
+    ctx.stroke();
+    ctx.restore();
+    // 어깨/몸통: 바라보는 방향에 수직으로 넓은 타원
+    ctx.save();
+    ctx.rotate(aim);
+    ctx.beginPath();
+    ctx.ellipse(-2, 0, r * 0.78, r * 1.08 + bob * 0.3, 0, 0, TAU);
+    const bg = ctx.createLinearGradient(-r, -r, r, r);
+    bg.addColorStop(0, skin.body);
+    bg.addColorStop(1, dark);
+    ctx.fillStyle = bg;
     ctx.fill();
     ctx.lineWidth = 2.5;
-    ctx.strokeStyle = skin.rim;
+    ctx.strokeStyle = '#0a0812';
     ctx.stroke();
-    this.drawSkinAcc(skin, r, t);
-    // 눈
-    for (const s of [-0.42, 0.42]) {
-      const ex = Math.cos(aim + s) * r * 0.55;
-      const ey = Math.sin(aim + s) * r * 0.55;
-      ctx.beginPath();
-      ctx.ellipse(ex, ey, 2.6, 3.6, aim, 0, TAU);
-      ctx.fillStyle = skin.eye;
-      ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = hexA(skin.rim, 0.85);
+    ctx.stroke();
+    // 손 (무기 쥔 위치)
+    ctx.fillStyle = skin.rim;
+    ctx.beginPath();
+    ctx.arc(r * 0.55, r * 0.72, 3.6, 0, TAU);
+    ctx.arc(r * 0.55, -r * 0.72, 3.6, 0, TAU);
+    ctx.fill();
+    // 머리 + 후드
+    ctx.beginPath();
+    ctx.arc(r * 0.18, 0, r * 0.56, 0, TAU);
+    const hg = ctx.createRadialGradient(r * 0.35, 0, 1, r * 0.18, 0, r * 0.56);
+    hg.addColorStop(0, skin.core);
+    hg.addColorStop(0.5, skin.body);
+    hg.addColorStop(1, dark);
+    ctx.fillStyle = hg;
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#0a0812';
+    ctx.stroke();
+    // 후드 안쪽 어둠 + 빛나는 눈
+    ctx.beginPath();
+    ctx.ellipse(r * 0.42, 0, r * 0.26, r * 0.36, 0, -Math.PI / 2, Math.PI / 2);
+    ctx.fillStyle = 'rgba(8,4,16,0.75)';
+    ctx.fill();
+    ctx.globalCompositeOperation = 'lighter';
+    for (const ey of [-r * 0.15, r * 0.15]) {
+      ctx.drawImage(glow(skin.eye === '#10233a' ? '#7fe7ff' : skin.eye), r * 0.5 - 5, ey - 5, 10, 10);
     }
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.restore();
+    this.drawSkinAcc(skin, r, t);
     // 피격 섬광
     const fl = this.flash.get(p.id);
     if (fl) {
@@ -1088,7 +1296,8 @@ export class Renderer {
   drawMonster(m, t) {
     const ctx = this.ctx;
     ctx.save();
-    ctx.translate(m.x, m.y);
+    const [rx, ry] = this.recoilOf(m.id);
+    ctx.translate(m.x + rx, m.y + ry);
     const r = m.r;
     ctx.fillStyle = 'rgba(0,0,0,0.35)';
     ctx.beginPath();

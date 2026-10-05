@@ -42,8 +42,10 @@
     <section class="panel col-center">
       <div class="tagline">명계의 오브 3개를 차지하라. 10분, 16명, 단 하나의 영혼만 지상으로.</div>
       <input id="name" maxlength="14" placeholder="닉네임" autocomplete="off" spellcheck="false">
-      <div class="panel-title">시작 무기</div>
+      <div class="panel-title">직업 (무기)</div>
       <div id="weapons" class="weapons"></div>
+      <div class="panel-title">보조 주문 (D · F) — 2개 선택</div>
+      <div id="spells" class="spells"></div>
       <button class="btn-play" id="btn-play"><span>빠른 대전</span><small id="queue-info">16인 · 빈자리는 봇</small></button>
       <div class="row">
         <button class="btn" id="btn-create">방 만들기</button>
@@ -68,7 +70,7 @@
       <div id="streak" class="streak"></div>
       <div class="panel-title">게임 방법</div>
       <ul class="howto">
-        <li><b>몬스터</b> 사냥 → 레벨업, <b>상자</b> → 장비</li>
+        <li><b>정글 캠프</b> → 레벨, <b>스킬 각인</b> → Q·W·E 등급</li>
         <li>2·4·6분에 나오는 <b>오브</b>를 차지하세요</li>
         <li>오브를 들고 있으면 <b>점수</b>가 쌓임 · 위치 공개</li>
         <li>3개 모으고 15초 버티면 <b>즉시 승리</b></li>
@@ -133,7 +135,7 @@
     <div class="death-title">쓰러졌습니다</div>
     <div class="death-sub">부활까지 <b id="death-timer">5.0</b>초</div>
     <div class="death-spec" id="death-spec"></div>
-    <div class="death-tip">오브를 가진 사람을 노리세요. 죽어도 레벨은 유지됩니다.</div>
+    <div class="death-tip">← → 키로 오브 보유자 관전 · 가장 높은 스킬 하나가 강등되었습니다</div>
   </div>
 </div>
 
@@ -215,17 +217,16 @@
   <div class="modal">
     <div class="modal-head"><div class="modal-title">조작법</div><button class="x" data-close="help">✕</button></div>
     <div class="keys">
-      <div><kbd>WASD</kbd> 이동</div>
-      <div><kbd>마우스</kbd> 조준</div>
-      <div><kbd>좌클릭</kbd> 기본 공격 (누르고 있으면 연속)</div>
-      <div><kbd>우클릭</kbd> 무기 스킬 1</div>
-      <div><kbd>Q</kbd> 무기 스킬 2</div>
+      <div><kbd>우클릭</kbd> 이동 (누르고 있으면 계속 따라감)</div>
+      <div><kbd>좌클릭</kbd> 마우스 방향 기본 공격</div>
+      <div><kbd>Q</kbd><kbd>W</kbd><kbd>E</kbd> 무기 스킬 (E는 대부분 이동기)</div>
       <div><kbd>R</kbd> 궁극기 (게이지 100%)</div>
-      <div><kbd>E</kbd> 갑옷 스킬</div>
-      <div><kbd>Space</kbd> 신발 스킬 (대시 등)</div>
-      <div><kbd>F</kbd> 상자 열기 / 장비 줍기</div>
-      <div><kbd>Esc</kbd> 메뉴</div>
+      <div><kbd>D</kbd><kbd>F</kbd> 보조 주문 (점멸, 정화 등)</div>
+      <div><kbd>S</kbd> 제자리 멈춤</div>
+      <div><kbd>우클릭</kbd> 상자·장비 위에서 누르면 열기/줍기</div>
+      <div><kbd>←</kbd><kbd>→</kbd> 죽었을 때 오브 보유자 관전 전환</div>
     </div>
+    <p class="muted">성장은 두 갈래: 정글 캠프를 돌아 <b>레벨</b>을 올리고, 상자·몬스터에서 나오는 <b>스킬 각인</b>으로 Q·W·E 등급을 올리세요. 셋이 모두 희귀 이상이면 R도 오릅니다. 죽으면 가장 높은 스킬 하나가 한 단계 강등됩니다.</p>
     <div id="help-weapons" class="help-weapons"></div>
   </div>
 </div>

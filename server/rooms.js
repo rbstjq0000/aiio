@@ -78,7 +78,7 @@ class Room {
   startGame() {
     const game = new Game({ mode: this.isPublic ? 'public' : 'private', fillTo: this.fillBots ? C.MAX_PLAYERS : this.clients.size, botLevel: this.botLevel });
     for (const c of this.clients) {
-      const p = game.addPlayer({ name: c.name, weapon: c.weapon, cosmetics: c.cos });
+      const p = game.addPlayer({ name: c.name, weapon: c.weapon, cosmetics: c.cos, spells: c.spells });
       c.pid = p.id;
       c.uiVer = -1;
     }
@@ -151,6 +151,7 @@ export class RoomManager {
     client.name = cleanName(msg.name);
     client.weapon = WEAPONS[msg.weapon] ? msg.weapon : 'greatsword';
     client.cos = sanitizeCosmetics(msg.cos);
+    client.spells = Array.isArray(msg.spells) ? msg.spells.slice(0, 2).map(String) : null;
     const mode = msg.mode;
     if (mode === 'create') {
       const room = new Room(this, { code: makeCode(this.rooms), isPublic: false });

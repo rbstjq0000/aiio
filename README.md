@@ -31,7 +31,9 @@ npm start            # http://localhost:8080 (멀티플레이 서버 + 게임 �
 shared/    게임 규칙. 서버와 브라우저(연습 모드)가 같은 코드를 실행
   sim.js        게임 루프: 맵, 오브, 부활, 상자/장비, 스틱스 강, 스냅샷
   combat.js     스킬 실행, 피해, CC, 투사체, 장판
-  items.js      무기·갑옷·신발·등급·오브 데이터 (밸런스 수정은 여기서)
+  items.js      무기 스킬·등급·갑옷·신발·보조 주문·오브 데이터 (밸런스 수정은 여기서)
+  maps.js       맵 데이터 (벽, 정글 캠프, 상자, 제단). 새 맵은 MAPS에 추가
+  nav.js        봇 길찾기
   monsters.js   몬스터 데이터와 AI
   bot.js        봇 AI
   constants.js  매치 시간, 체력, 경험치 곡선 등

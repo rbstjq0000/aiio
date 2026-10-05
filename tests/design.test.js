@@ -34,7 +34,7 @@ function killTime(weapon) {
     const dist = Math.hypot(d.x - a.x, d.y - a.y);
     inp.mx = dist > PREF[weapon] + 10 ? (d.x - a.x) / dist : 0;
     inp.my = dist > PREF[weapon] + 10 ? (d.y - a.y) / dist : 0;
-    for (const k of ['s1', 's2']) if (a.cd[k] <= 0 && !a.act) inp.p[PRESS[k]]++;
+    for (const k of ['q', 'w', 'e']) if (a.cd[k] <= 0 && !a.act && WEAPONS[weapon][k].dmg !== 0 && WEAPONS[weapon][k].type !== 'blinkskill' && WEAPONS[weapon][k].type !== 'backflip') inp.p[PRESS[k]]++;
     d.input.mx = 0;
     d.input.my = 0;
     g.step(DT);
@@ -46,6 +46,7 @@ function killTime(weapon) {
 const ttk = {};
 for (const w of WEAPON_IDS) ttk[w] = killTime(w);
 results.push(['무기별 1,000 체력 처치 시간 (목표 ~5초)', Object.entries(ttk).map(([w, t]) => `${WEAPONS[w].name} ${t.toFixed(1)}s`).join(', ')]);
+console.log(`- ${results[0][0]}: ${results[0][1]}`);
 // 근접 5초 ±0.5, 원거리·CC 무기는 사거리 이점 대신 5~6.2초
 const RANGED = new Set(['longbow', 'firestaff', 'froststaff']);
 for (const [w, t] of Object.entries(ttk)) {

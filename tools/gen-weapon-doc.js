@@ -1,13 +1,14 @@
 // shared/items.js 데이터로 docs/COMBAT_DESIGN.md의 무기/갑옷/신발 표를 다시 만든다.
 // 문서와 코드 수치가 어긋나지 않게: `node tools/gen-weapon-doc.js`
 import fs from 'node:fs';
-import { WEAPONS, ARMORS, BOOTS } from '../shared/items.js';
+import { WEAPONS, ARMORS, BOOTS, SPELLS, GRADE_CD, RARITIES } from '../shared/items.js';
 
 const KEYS = [
-  ['basic', '좌'],
-  ['s1', '우'],
-  ['s2', 'Q'],
-  ['ult', 'R'],
+  ['basic', '좌클릭'],
+  ['q', 'Q'],
+  ['w', 'W'],
+  ['e', 'E'],
+  ['r', 'R'],
 ];
 
 function dps(w) {
@@ -28,15 +29,18 @@ for (const w of Object.values(WEAPONS)) {
   md += '| 키 | 스킬 | 효과 | 쿨타임 |\n|---|---|---|---|\n';
   for (const [k, label] of KEYS) {
     const sk = w[k];
-    const cd = k === 'basic' ? '—' : k === 'ult' ? '궁극기 게이지' : `${sk.cd}초`;
+    const cd = k === 'basic' ? '—' : k === 'r' ? '궁극기 게이지' : `${sk.cd}초`;
     md += `| ${label} | ${sk.name} | ${sk.desc} | ${cd} |\n`;
   }
   md += '\n';
 }
-md += '### 갑옷 (E)\n| 갑옷 | 특성 | E 스킬 | 효과 | 쿨타임 |\n|---|---|---|---|---|\n';
-for (const a of Object.values(ARMORS)) md += `| ${a.icon} ${a.name} | ${a.desc} | ${a.skill.name} | ${a.skill.desc} | ${a.skill.cd}초 |\n`;
-md += '\n### 신발 (Space)\n| 신발 | 스킬 | 효과 | 쿨타임 |\n|---|---|---|---|\n';
-for (const b of Object.values(BOOTS)) md += `| ${b.icon} ${b.name} | ${b.skill.name} | ${b.skill.desc} | ${b.skill.cd}초 |\n`;
+md += '### 스킬 등급 (스킬 각인)\n| 등급 | 피해 배율 | 쿨타임 배율 |\n|---|---|---|\n';
+RARITIES.forEach((r, i) => (md += `| ${r.name} | ×${r.mult} | ×${GRADE_CD[i]} |\n`));
+md += '\n### 갑옷 · 신발 (능력치, 등급 배율이 효과에 곱해짐)\n| 장비 | 효과 |\n|---|---|\n';
+for (const a of Object.values(ARMORS)) md += `| ${a.icon} ${a.name} | ${a.desc} |\n`;
+for (const b of Object.values(BOOTS)) md += `| ${b.icon} ${b.name} | ${b.desc} |\n`;
+md += '\n### 보조 주문 (D·F, 대기실에서 2개 선택)\n| 주문 | 효과 | 쿨타임 |\n|---|---|---|\n';
+for (const sp of Object.values(SPELLS)) md += `| ${sp.icon} ${sp.name} | ${sp.desc} | ${sp.cd}초 |\n`;
 md += '<!-- gen:weapons end -->';
 
 const path = new URL('../docs/COMBAT_DESIGN.md', import.meta.url);

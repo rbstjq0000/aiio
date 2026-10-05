@@ -81,3 +81,19 @@ export function weightedPick(items, rng = Math.random) {
   }
   return items[items.length - 1];
 }
+
+// 두 선분 사이 최단 거리의 제곱 (투사체 경로 vs 벽)
+export function segSegDist2(ax, ay, bx, by, cx, cy, dx, dy) {
+  // 교차하면 0
+  const d1 = (dx - cx) * (ay - cy) - (dy - cy) * (ax - cx);
+  const d2 = (dx - cx) * (by - cy) - (dy - cy) * (bx - cx);
+  const d3 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+  const d4 = (bx - ax) * (dy - ay) - (by - ay) * (dx - ax);
+  if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return 0;
+  return Math.min(
+    segPointDist2(ax, ay, bx, by, cx, cy),
+    segPointDist2(ax, ay, bx, by, dx, dy),
+    segPointDist2(cx, cy, dx, dy, ax, ay),
+    segPointDist2(cx, cy, dx, dy, bx, by),
+  );
+}

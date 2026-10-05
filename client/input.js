@@ -1,25 +1,22 @@
-// 키보드/마우스 입력. 누름은 카운터로 보내서 패킷 손실·틱 사이 입력도 놓치지 않음
-import { PRESS } from '../shared/constants.js';
+// 롤식 입력: 우클릭 이동(누르고 있으면 계속 따라감), 좌클릭 기본 공격, QWER 스킬, DF 주문
+// 누름은 카운터로 보내서 틱 사이에 누른 것도 놓치지 않음
+import { PRESS, PRESS_N } from '../shared/constants.js';
 
-const KEYMAP = {
-  KeyQ: 's2',
-  KeyR: 'ult',
-  KeyE: 'e',
-  Space: 'space',
-  KeyF: 'f',
-};
+const KEYMAP = { KeyQ: 'q', KeyW: 'w', KeyE: 'e', KeyR: 'r', KeyD: 'd', KeyF: 'f' };
 
 export class Input {
   constructor(canvas) {
     this.canvas = canvas;
-    this.keys = new Set();
     this.mouseX = innerWidth / 2;
     this.mouseY = innerHeight / 2;
     this.lmb = false;
-    this.counters = [0, 0, 0, 0, 0, 0, 0];
-    this.onPress = null; // (key) => void, 즉시 피드백용
-    this.onKey = null; // 일반 키 (Tab, Esc 등)
+    this.rmb = false;
+    this.counters = new Array(PRESS_N).fill(0);
+    this.onPress = null; // (key) => void
+    this.onRightClick = null; // (screenX, screenY) => void
+    this.onKey = null;
     this.enabled = false;
+    this.stopPressed = false;
 
     addEventListener('keydown', (e) => {
       if (!this.enabled) return;
@@ -27,14 +24,13 @@ export class Input {
       if (e.code === 'Tab' || e.code === 'Space') e.preventDefault();
       if (this.onKey && this.onKey(e)) return;
       if (e.repeat) return;
-      this.keys.add(e.code);
       const k = KEYMAP[e.code];
       if (k) this.press(k);
+      if (e.code === 'KeyS') this.stopPressed = true; // 롤처럼 S = 제자리 멈춤
     });
-    addEventListener('keyup', (e) => this.keys.delete(e.code));
     addEventListener('blur', () => {
-      this.keys.clear();
       this.lmb = false;
+      this.rmb = false;
     });
     canvas.addEventListener('mousemove', (e) => {
       this.mouseX = e.clientX;
@@ -47,10 +43,14 @@ export class Input {
       if (e.button === 0) {
         this.lmb = true;
         this.press('atk');
-      } else if (e.button === 2) this.press('s1');
+      } else if (e.button === 2) {
+        this.rmb = true;
+        if (this.onRightClick) this.onRightClick(e.clientX, e.clientY);
+      }
     });
     addEventListener('mouseup', (e) => {
       if (e.button === 0) this.lmb = false;
+      if (e.button === 2) this.rmb = false;
     });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   }
@@ -60,20 +60,9 @@ export class Input {
     if (this.onPress) this.onPress(k);
   }
 
-  move() {
-    let mx = 0;
-    let my = 0;
-    const k = this.keys;
-    if (k.has('KeyW') || k.has('ArrowUp')) my -= 1;
-    if (k.has('KeyS') || k.has('ArrowDown')) my += 1;
-    if (k.has('KeyA') || k.has('ArrowLeft')) mx -= 1;
-    if (k.has('KeyD') || k.has('ArrowRight')) mx += 1;
-    const l = Math.hypot(mx, my);
-    return l > 0 ? [mx / l, my / l] : [0, 0];
-  }
-
   reset() {
-    this.keys.clear();
     this.lmb = false;
+    this.rmb = false;
+    this.stopPressed = false;
   }
 }

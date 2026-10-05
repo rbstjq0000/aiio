@@ -2,6 +2,19 @@
 // 사냥 → 상자/장비 → 오브 쟁탈 → 교전/후퇴
 import { dist2 } from './math.js';
 import { PRESS } from './constants.js';
+import { WEAPONS, SPELLS } from './items.js';
+
+function useSpell(p, wanted) {
+  for (let i = 0; i < 2; i++) {
+    const id = p.spells[i];
+    const slot = i === 0 ? 'd' : 'f';
+    if (wanted.includes(id) && p.cd[slot] <= 0) {
+      p.input.p[PRESS[slot]]++;
+      return true;
+    }
+  }
+  return false;
+}
 
 export const BOT_NAMES = [
   '그림자여우', 'Noctis', '망자의왕', 'Kairos', '하늘조각', 'Rinne', '불멸의토끼', 'Ashen',
@@ -12,15 +25,15 @@ export const BOT_NAMES = [
 
 // 무기별 교전 거리와 스킬 사용 조건
 const AI = {
-  greatsword: { pref: 70, reach: 100, s1: { max: 150 }, s2: { min: 110, max: 320, ground: true }, ult: { max: 480, aim: true } },
-  daggers: { pref: 55, reach: 80, s1: { min: 90, max: 230, aim: true }, s2: { min: 140, max: 580, aim: true }, ult: { max: 290, exec: true } },
-  longbow: { pref: 430, reach: 740, s1: { min: 200, max: 900, aim: true }, s2: { max: 190, aim: true }, ult: { max: 690, ground: true } },
-  firestaff: { pref: 380, reach: 630, s1: { max: 640, ground: true }, s2: { max: 270, aim: true }, ult: { max: 690, ground: true } },
-  froststaff: { pref: 360, reach: 630, s1: { max: 165 }, s2: { max: 680, aim: true }, ult: { max: 590, ground: true } },
-  spear: { pref: 120, reach: 150, s1: { min: 110, max: 290, aim: true }, s2: { max: 150 }, ult: { min: 140, max: 860, aim: true } },
+  greatsword: { pref: 70, reach: 105, q: { max: 150 }, w: { min: 110, max: 320, ground: true }, e: { min: 140, max: 270, aim: true }, r: { max: 480, aim: true } },
+  daggers: { pref: 55, reach: 80, q: { min: 90, max: 240, aim: true }, w: { min: 140, max: 580, aim: true }, e: { max: 120 }, r: { max: 300, exec: true } },
+  longbow: { pref: 430, reach: 740, q: { min: 200, max: 900, aim: true }, w: { max: 400, aim: true }, e: { max: 200, aim: true }, r: { max: 690, ground: true } },
+  firestaff: { pref: 380, reach: 630, q: { max: 640, ground: true }, w: { max: 270, aim: true }, e: { max: 160, escape: true }, r: { max: 690, ground: true } },
+  froststaff: { pref: 360, reach: 630, q: { max: 680, aim: true }, w: { max: 160 }, e: { max: 160, escape: true }, r: { max: 590, ground: true } },
+  spear: { pref: 120, reach: 150, q: { max: 300, aim: true }, w: { max: 150 }, e: { min: 120, max: 300, aim: true }, r: { min: 140, max: 860, aim: true } },
 };
 
-const PROJ_SPEED = { longbow: 1150, firestaff: 800, froststaff: 850 };
+const PROJ_SPEED = { longbow: 1200, firestaff: 820, froststaff: 880 };
 
 export function makeBotBrain(rng, skill) {
   return {
@@ -58,6 +71,27 @@ function press(p, key) {
   p.input.p[PRESS[key]]++;
 }
 
+// 목표 지점까지 이동 방향: 벽이 없으면 직선, 있으면 A* 경로를 따라감
+function navDir(game, p, b, tx, ty) {
+  const nav = game.nav;
+  if (!nav || nav.clearLine(p.x, p.y, tx, ty)) {
+    b.path = null;
+    return [tx - p.x, ty - p.y];
+  }
+  b.pathT = (b.pathT || 0) - 1;
+  if (!b.path || b.pathT <= 0 || (b.pathGoal && (b.pathGoal[0] - tx) ** 2 + (b.pathGoal[1] - ty) ** 2 > 90 * 90)) {
+    b.path = nav.find(p.x, p.y, tx, ty);
+    b.pathGoal = [tx, ty];
+    b.pathT = 25;
+  }
+  const path = b.path;
+  if (!path || !path.length) return [tx - p.x, ty - p.y];
+  while (path.length > 1 && (path[0][0] - p.x) ** 2 + (path[0][1] - p.y) ** 2 < 34 * 34) path.shift();
+  // 다음 지점이 이미 보이면 건너뜀
+  if (path.length > 1 && nav.clearLine(p.x, p.y, path[1][0], path[1][1])) path.shift();
+  return [path[0][0] - p.x, path[0][1] - p.y];
+}
+
 export function botThink(game, p, dt) {
   const b = p.brain;
   const rng = game.rng;
@@ -78,12 +112,12 @@ export function botThink(game, p, dt) {
 
 // 상대와 나의 전투력 비교 (체력 × 레벨 × 장비)
 function power(u) {
-  return u.hp * (1 + 0.03 * (u.level - 1)) * (1 + 0.08 * u.gear.weapon.rarity);
+  return u.hp * (1 + 0.015 * (u.level - 1)) * (1 + 0.04 * (u.grade.q + u.grade.w + u.grade.e) / 3);
 }
 
 function better(p, item) {
-  const cur = p.gear[item.kind];
-  return item.rarity > cur.rarity;
+  if (item.kind === 'skill') return item.rarity > p.grade[item.type];
+  return item.rarity > p.gear[item.kind].rarity;
 }
 
 function decide(game, p, b) {
@@ -191,6 +225,7 @@ function decide(game, p, b) {
   }
   if (item) {
     b.mode = 'item';
+    b.itemId = item.id;
     b.goal = [item.x, item.y];
     return;
   }
@@ -282,12 +317,12 @@ function act(game, p, b, dt) {
       out.mx = dx / d - (p.x / game.R) * 0.5;
       out.my = dy / d - (p.y / game.R) * 0.5;
       out.aim = Math.atan2(-dy, -dx);
-      if (d < 200 && p.cd.space <= 0 && rng() < 0.1 + b.skill * 0.15) {
+      if (d < 200 && rng() < 0.1 + b.skill * 0.15) {
         out.dash = true;
         out.dashX = dx / d;
         out.dashY = dy / d;
       }
-      if (d < 250 && p.cd.e <= 0 && hpR < 0.5) press(p, 'e');
+      if (d < 250 && hpR < 0.5) useSpell(p, ['barrier', 'shadow', 'ghost']);
       const ai = AI[p.gear.weapon.type];
       if (ai.reach > 300 && d < ai.reach) out.atk = true;
     } else b.mode = 'wander';
@@ -299,13 +334,16 @@ function act(game, p, b, dt) {
       if (b.mode === 'chest' && d < 52) {
         out.mx = 0;
         out.my = 0;
-        if (!p.channel) press(p, 'f');
+        if (!p.channel) {
+          p.input.ti = 0;
+          press(p, 'act');
+        }
       } else if (b.mode === 'item' && d < 50) {
-        press(p, 'f');
+        p.input.ti = b.itemId;
+        press(p, 'act');
         b.mode = 'wander';
       } else {
-        out.mx = dx;
-        out.my = dy;
+        [out.mx, out.my] = navDir(game, p, b, b.goal[0], b.goal[1]);
       }
     }
   }
@@ -313,21 +351,18 @@ function act(game, p, b, dt) {
     b.wanderT -= dt;
     if (b.wanderT <= 0 || dist2(p.x, p.y, b.wx, b.wy) < 60 * 60) {
       b.wanderT = 3 + rng() * 3;
-      const a = rng() * Math.PI * 2;
-      const r = Math.sqrt(rng()) * game.R * 0.7;
-      b.wx = Math.cos(a) * r;
-      b.wy = Math.sin(a) * r;
+      // 빈 곳 중 아무 정글 캠프 근처로
+      const c = game.camps[Math.floor(rng() * game.camps.length)];
+      b.wx = c ? c.x + (rng() - 0.5) * 200 : 0;
+      b.wy = c ? c.y + (rng() - 0.5) * 200 : 0;
     }
-    out.mx = b.wx - p.x;
-    out.my = b.wy - p.y;
+    [out.mx, out.my] = navDir(game, p, b, b.wx, b.wy);
   }
 
-  // 기절·속박 → 정화 (천 갑옷)
-  if (p.st.stunT > 0 || p.st.rootT > 0) {
-    if (p.gear.armor.type === 'cloth' && p.cd.e <= 0 && rng() < 0.15 * b.skill + 0.05) press(p, 'e');
-  }
+  // 기절·속박 → 정화
+  if ((p.st.stunT > 0 || p.st.rootT > 0) && rng() < 0.15 * b.skill + 0.05) useSpell(p, ['cleanse']);
   // 교전 중 방벽
-  if (b.mode === 'fight' && p.gear.armor.type === 'plate' && p.cd.e <= 0 && game.time - p.lastDmgT < 0.3 && hpR < 0.75) press(p, 'e');
+  if (b.mode === 'fight' && game.time - p.lastDmgT < 0.3 && hpR < 0.5) useSpell(p, ['barrier']);
 
   if (b.avoidT > 0) {
     b.avoidT -= dt;
@@ -378,10 +413,20 @@ function act(game, p, b, dt) {
   if (out.aim != null) inp.aim = out.aim;
   else if (ml > 0.001) inp.aim = Math.atan2(my, mx);
   inp.atk = out.atk;
-  if (out.dash && p.cd.space <= 0) {
-    inp.mx = out.dashX;
-    inp.my = out.dashY;
-    press(p, 'space');
+  // 회피/추격 이동기: 무기 E가 이동기면 우선, 아니면 점멸·질주
+  if (out.dash) {
+    const ex = WEAPONS[p.gear.weapon.type].e;
+    const mobileE = ex.type === 'dashstrike' || ex.type === 'blinkskill' || ex.type === 'backflip';
+    if (mobileE && p.cd.e <= 0 && !p.act) {
+      inp.aim = Math.atan2(out.dashY, out.dashX);
+      inp.cx = p.x + out.dashX * 250;
+      inp.cy = p.y + out.dashY * 250;
+      press(p, 'e');
+    } else if (b.skill > 0.5 || b.mode === 'flee') {
+      inp.cx = p.x + out.dashX * 260;
+      inp.cy = p.y + out.dashY * 260;
+      useSpell(p, ['flash', 'ghost']);
+    }
   }
 }
 
@@ -415,8 +460,10 @@ function combat(game, p, b, t, out, dt) {
   let mx = 0;
   let my = 0;
   if (d > ai.pref + 25) {
-    mx = nx;
-    my = ny;
+    const [vx, vy] = navDir(game, p, b, t.x, t.y);
+    const l = Math.sqrt(vx * vx + vy * vy) || 1;
+    mx = vx / l;
+    my = vy / l;
   } else if (d < ai.pref - 40 && ai.pref > 200) {
     mx = -nx;
     my = -ny;
@@ -445,23 +492,24 @@ function combat(game, p, b, t, out, dt) {
   const tryUse = (key) => {
     const c = ai[key];
     if (!c) return false;
-    if (key === 'ult' ? p.ult < 100 : p.cd[key] > 0) return false;
+    if (key === 'r' ? p.ult < 100 : p.cd[key] > 0) return false;
     if (c.min && d < c.min) return false;
     if (c.max && d > c.max + t.r) return false;
     if (c.ground || c.exec) {
       p.input.cx = px;
       p.input.cy = py;
     }
-    if (key === 'ult' && !t.isPlayer && t.type !== 'guardian' && t.type !== 'elite') return false;
+    if (c.escape) return false;
+    if (key === 'r' && !t.isPlayer && t.type !== 'guardian' && t.type !== 'elite') return false;
     press(p, key);
     b.actCd = 0.25;
     return true;
   };
   if (rng() < 0.25 + b.skill * 0.35) {
-    if (tryUse('ult') || tryUse('s2') || tryUse('s1')) return;
+    if (tryUse('r') || tryUse('w') || tryUse('q') || tryUse('e')) return;
   }
   // 근접 무기: 대시로 거리 좁히기
-  if (t.isPlayer && ai.pref < 200 && d > 160 && d < 320 && p.cd.space <= 0 && p.hp > p.maxHp * 0.45 && rng() < (0.03 + 0.05 * b.skill) * (dt * 30)) {
+  if (t.isPlayer && ai.pref < 200 && d > 160 && d < 320 && p.hp > p.maxHp * 0.45 && rng() < (0.03 + 0.05 * b.skill) * (dt * 30)) {
     out.dash = true;
     out.dashX = nx;
     out.dashY = ny;
@@ -491,7 +539,7 @@ function dodge(game, p, b, out) {
     }
     out.mx = ex;
     out.my = ey;
-    if (left < 0.35 && p.cd.space <= 0 && b.dodgeT <= 0 && game.rng() < b.skill * 0.6 + 0.1) {
+    if (left < 0.35 && b.dodgeT <= 0 && game.rng() < b.skill * 0.6 + 0.1) {
       out.dash = true;
       out.dashX = ex;
       out.dashY = ey;
@@ -499,7 +547,7 @@ function dodge(game, p, b, out) {
     }
     return;
   }
-  if (b.dodgeT > 0 || p.cd.space > 0) return;
+  if (b.dodgeT > 0) return;
   for (const q of game.projs) {
     if (!q.alive || q.team === p.team) continue;
     const rx = p.x - q.x;

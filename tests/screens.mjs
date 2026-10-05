@@ -30,21 +30,21 @@ await page.waitForTimeout(1500);
 await page.screenshot({ path: `${out}/3-lobby.png` });
 await page.waitForTimeout(3500);
 
-// 이동 + 공격 + 스킬
+// 우클릭 이동 + 좌클릭 공격 + 스킬
+await page.mouse.click(1000, 450, { button: 'right' });
+await page.waitForTimeout(900);
 await page.mouse.move(900, 400);
-await page.keyboard.down('KeyD');
-await page.waitForTimeout(800);
-await page.keyboard.up('KeyD');
 await page.mouse.down();
-await page.waitForTimeout(600);
+await page.waitForTimeout(500);
 await page.mouse.up();
-await page.mouse.click(900, 400, { button: 'right' });
 await page.keyboard.press('KeyQ');
-await page.waitForTimeout(250);
+await page.waitForTimeout(120);
 await page.screenshot({ path: `${out}/4-combat.png` });
-await page.keyboard.press('Space');
-await page.waitForTimeout(150);
-await page.screenshot({ path: `${out}/5-dash.png` });
+await page.keyboard.press('KeyW');
+await page.waitForTimeout(200);
+await page.keyboard.press('KeyE');
+await page.waitForTimeout(120);
+await page.screenshot({ path: `${out}/5-skills.png` });
 
 // 시간을 빨리 돌려 오브 단계 확인 (연습 모드 게임 객체에 직접 접근)
 await page.evaluate(() => {

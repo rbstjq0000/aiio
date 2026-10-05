@@ -1,5 +1,5 @@
 // 진입점: 메뉴 / 상점 / 로비 / 게임 / 결과 화면 연결
-import { WEAPONS, WEAPON_IDS, RARITIES } from '../shared/items.js';
+import { WEAPONS, WEAPON_IDS, RARITIES, SPELLS, SPELL_IDS, DEFAULT_SPELLS } from '../shared/items.js';
 import { COSMETICS, COSMETIC_MAP, COSMETIC_TYPES, RARITY_LABEL, RARITY_COLOR } from '../shared/cosmetics.js';
 import { MAX_PLAYERS } from '../shared/constants.js';
 import { Renderer } from './render.js';
@@ -91,6 +91,7 @@ function makePreview(c) {
   const pv = Object.create(Renderer.prototype);
   pv.ctx = c.getContext('2d');
   pv.flash = new Map();
+  pv.recoils = new Map();
   pv.settings = {};
   pv.particles = [];
   return pv;
@@ -135,11 +136,35 @@ function renderWeapons() {
     b.className = `wcard${profile.d.weapon === id ? ' sel' : ''}`;
     b.style.setProperty('--wc', w.color);
     b.innerHTML = `<div class="wi">${w.icon}</div><div class="wn">${w.name}</div><div class="wr">${w.role}</div>`;
-    b.title = `${w.basic.name}: ${w.basic.desc}\n${w.s1.name}: ${w.s1.desc}\n${w.s2.name}: ${w.s2.desc}\n${w.ult.name}: ${w.ult.desc}`;
+    b.title = `좌클릭 ${w.basic.name}: ${w.basic.desc}\nQ ${w.q.name}: ${w.q.desc}\nW ${w.w.name}: ${w.w.desc}\nE ${w.e.name}: ${w.e.desc}\nR ${w.r.name}: ${w.r.desc}`;
     b.onclick = () => {
       profile.d.weapon = id;
       profile.save();
       renderWeapons();
+      play('ui');
+    };
+    box.appendChild(b);
+  }
+}
+
+function renderSpells() {
+  const box = $('spells');
+  box.innerHTML = '';
+  const sel = profile.d.spells || (profile.d.spells = DEFAULT_SPELLS.slice());
+  for (const id of SPELL_IDS) {
+    const sp = SPELLS[id];
+    const b = document.createElement('button');
+    const idx = sel.indexOf(id);
+    b.className = `spell-btn${idx >= 0 ? ' sel' : ''}`;
+    b.title = `${sp.desc} · ${sp.cd}초`;
+    b.innerHTML = `<i>${sp.icon}</i>${sp.name}${idx >= 0 ? `<b>${idx ? 'F' : 'D'}</b>` : ''}`;
+    b.onclick = () => {
+      const i = sel.indexOf(id);
+      if (i >= 0) return;
+      sel.shift();
+      sel.push(id);
+      profile.save();
+      renderSpells();
       play('ui');
     };
     box.appendChild(b);
@@ -177,6 +202,7 @@ function renderMenu() {
   renderWallet();
   renderAccount();
   renderWeapons();
+  renderSpells();
   renderQuests();
 }
 
@@ -216,7 +242,7 @@ pollStatus();
 // ---------------- 게임 시작 ----------------
 function joinMsg(mode, extra = {}) {
   const name = ($('name').value || '').trim() || `영혼${Math.floor(Math.random() * 900 + 100)}`;
-  return { t: 'join', mode, name, weapon: profile.d.weapon, cos: profile.d.equipped, ...extra };
+  return { t: 'join', mode, name, weapon: profile.d.weapon, spells: profile.d.spells || DEFAULT_SPELLS, cos: profile.d.equipped, ...extra };
 }
 
 async function connect(kind, msg, opts = {}) {
@@ -282,12 +308,14 @@ $('room-join-go').onclick = () => {
 
 const TIPS = [
   '오브를 들고 있으면 위치가 모두에게 보입니다. 혼자 다니지 마세요.',
-  '바닥에 빨간 예고가 보이면 Space로 피하세요. 대시 중에는 무적입니다.',
+  '바닥에 빨간 예고가 보이면 우클릭으로 빠져나가거나 E·점멸로 피하세요.',
+  '정글 캠프는 잡으면 일정 시간 뒤 다시 생깁니다. 동선을 짜서 돌아보세요.',
+  'Q·W·E 스킬 각인이 모두 희귀 이상이면 R도 함께 강해집니다.',
   '기절·속박은 최대 1초, 이후 1.5초는 면역입니다.',
   '상자를 열 때는 1초 동안 멈춰야 합니다. 맞으면 끊깁니다.',
   '넉백으로 적을 기둥에 박으면 추가 피해와 기절!',
-  '천 갑옷의 E(정화)는 기절 중에도 쓸 수 있습니다.',
-  '죽어도 레벨은 유지됩니다. 하지만 오브와 좋은 장비 하나를 떨어뜨립니다.',
+  '정화(보조 주문)는 기절 중에도 쓸 수 있습니다.',
+  '죽으면 오브를 모두 떨어뜨리고 가장 높은 스킬이 한 단계 강등됩니다.',
 ];
 
 function showLobby(m) {
@@ -347,6 +375,10 @@ function backToMenu() {
 
 // Esc: 일시 메뉴
 input.onKey = (e) => {
+  if ((e.code === 'ArrowLeft' || e.code === 'ArrowRight') && transport) {
+    transport.send({ t: 'spec', d: e.code === 'ArrowLeft' ? -1 : 1 });
+    return true;
+  }
   if (e.code === 'Escape') {
     $('pause').classList.toggle('hidden');
     return true;
@@ -588,7 +620,7 @@ document.querySelectorAll('[data-oauth]').forEach((b) => (b.onclick = () => toas
 $('btn-help').onclick = () => {
   $('help-weapons').innerHTML = WEAPON_IDS.map((id) => {
     const w = WEAPONS[id];
-    return `<div class="hw" style="border-color:${w.color}55"><b style="color:${w.color}">${w.icon} ${w.name}</b> · ${w.role}<br>좌: ${w.basic.name} — ${w.basic.desc}<br>우: ${w.s1.name} — ${w.s1.desc}<br>Q: ${w.s2.name} — ${w.s2.desc}<br>R: ${w.ult.name} — ${w.ult.desc}</div>`;
+    return `<div class="hw" style="border-color:${w.color}55"><b style="color:${w.color}">${w.icon} ${w.name}</b> · ${w.role}<br>좌클릭: ${w.basic.name} — ${w.basic.desc}<br>Q: ${w.q.name} — ${w.q.desc}<br>W: ${w.w.name} — ${w.w.desc}<br>E: ${w.e.name} — ${w.e.desc}<br>R: ${w.r.name} — ${w.r.desc}</div>`;
   }).join('');
   openModal('help');
 };

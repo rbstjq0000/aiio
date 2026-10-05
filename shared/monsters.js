@@ -2,11 +2,11 @@
 import { angleDiff, dist2 } from './math.js';
 
 export const MONSTERS = {
-  shade: { idx: 0, name: '망령', hp: 220, r: 15, speed: 150, dmg: 30, xp: 10, mass: 0.7, aggro: 420, atkRange: 34, windup: 0.32, atkCd: 1.0, kbRes: 1.2 },
-  archer: { idx: 1, name: '해골 궁수', hp: 180, r: 15, speed: 120, dmg: 35, xp: 12, mass: 0.8, aggro: 520, atkRange: 430, windup: 0.5, atkCd: 2.2, kbRes: 1.2, keep: 260, projSpeed: 430 },
-  brute: { idx: 2, name: '지옥 거한', hp: 700, r: 26, speed: 95, dmg: 80, xp: 35, mass: 3, aggro: 420, atkRange: 110, windup: 0.8, atkCd: 2.6, kbRes: 0.45, slamR: 100 },
-  elite: { idx: 3, name: '망령 기사', hp: 1300, r: 24, speed: 140, dmg: 70, xp: 80, mass: 4, aggro: 460, atkRange: 100, windup: 0.6, atkCd: 1.8, kbRes: 0.35, slamR: 95, leash: 500 },
-  guardian: { idx: 4, name: '오브 수호자', hp: 4500, r: 38, speed: 115, dmg: 110, xp: 250, mass: 14, aggro: 380, atkRange: 140, windup: 0.85, atkCd: 2.2, kbRes: 0.15, slamR: 140, ringEvery: 4.5, ringDmg: 60, leash: 300 },
+  shade: { idx: 0, name: '망령', hp: 220, r: 15, speed: 150, dmg: 30, xp: 18, mass: 0.7, aggro: 420, atkRange: 34, windup: 0.32, atkCd: 1.0, kbRes: 1.2 },
+  archer: { idx: 1, name: '해골 궁수', hp: 180, r: 15, speed: 120, dmg: 35, xp: 22, mass: 0.8, aggro: 520, atkRange: 430, windup: 0.5, atkCd: 2.2, kbRes: 1.2, keep: 260, projSpeed: 430 },
+  brute: { idx: 2, name: '지옥 거한', hp: 700, r: 26, speed: 95, dmg: 80, xp: 63, mass: 3, aggro: 420, atkRange: 110, windup: 0.8, atkCd: 2.6, kbRes: 0.45, slamR: 100 },
+  elite: { idx: 3, name: '망령 기사', hp: 1300, r: 24, speed: 140, dmg: 70, xp: 144, mass: 4, aggro: 460, atkRange: 100, windup: 0.6, atkCd: 1.8, kbRes: 0.35, slamR: 95, leash: 500 },
+  guardian: { idx: 4, name: '오브 수호자', hp: 4500, r: 38, speed: 115, dmg: 110, xp: 450, mass: 14, aggro: 380, atkRange: 140, windup: 0.85, atkCd: 2.2, kbRes: 0.15, slamR: 140, ringEvery: 4.5, ringDmg: 60, leash: 300 },
 };
 export const MONSTER_TYPES = Object.keys(MONSTERS);
 export const MONSTER_BY_IDX = MONSTER_TYPES.map((k) => MONSTERS[k]);
@@ -37,7 +37,7 @@ export function updateMonster(game, m, dt) {
     const tgt = m.target ? game.players.get(m.target) : null;
     const homeX = m.homeX;
     const homeY = m.homeY;
-    const leash = def.leash || 900;
+    const leash = m.leash || def.leash || 900;
     if (tgt && (!tgt.alive || dist2(tgt.x, tgt.y, homeX, homeY) > (leash + 300) ** 2)) {
       m.target = null;
     }
@@ -105,10 +105,11 @@ export function updateMonster(game, m, dt) {
       }
       if (d < reach && m.atkT <= 0) startWindup(game, m, def, tgt);
     }
-    // 수호자/기사는 자기 자리를 크게 벗어나지 않음
-    if (def.leash) {
+    // 캠프 몬스터·수호자는 자기 자리를 크게 벗어나지 않음 (롤 정글처럼 끌고 가면 돌아감)
+    if (m.leash) {
       const hd2 = dist2(m.x, m.y, m.homeX, m.homeY);
-      if (hd2 > def.leash * def.leash) {
+      if (hd2 > m.leash * m.leash) {
+        if (hd2 > (m.leash + 200) ** 2) m.target = 0;
         const hx = m.homeX - m.x;
         const hy = m.homeY - m.y;
         const hd = Math.sqrt(hd2);
