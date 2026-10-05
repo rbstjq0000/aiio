@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STYX.io</title>
+<meta name="description" content="명계의 오브를 차지하라 — 10분 로그라이크 배틀 io 게임">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Cinzel:wght@700;900&family=Noto+Sans+KR:wght@400;600;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+<canvas id="game"></canvas>
+<canvas id="menubg"></canvas>
+
+<!-- ================= 메인 메뉴 ================= -->
+<div id="menu" class="screen">
+  <header class="topbar">
+    <div class="brand"><span class="logo">STYX</span><span class="logo-io">.io</span></div>
+    <div class="wallet">
+      <span class="coin obol" title="오볼: 플레이로 얻는 무료 재화">◎ <b id="obols">0</b></span>
+      <span class="coin gem" title="영혼석: 유료 재화">◆ <b id="gems">0</b></span>
+      <button class="btn-mini" id="btn-gems">충전</button>
+      <button class="btn-ghost" id="btn-login">로그인</button>
+    </div>
+  </header>
+
+  <main class="menu-grid">
+    <!-- 왼쪽: 캐릭터 -->
+    <section class="panel col-left">
+      <div class="panel-title">내 영혼</div>
+      <canvas id="preview" width="220" height="220"></canvas>
+      <div id="account" class="account"></div>
+      <div class="row">
+        <button class="btn" id="btn-store">상점</button>
+        <button class="btn" id="btn-locker">보관함</button>
+      </div>
+    </section>
+
+    <!-- 가운데: 플레이 -->
+    <section class="panel col-center">
+      <div class="tagline">명계의 오브 3개를 차지하라. 10분, 16명, 단 하나의 영혼만 지상으로.</div>
+      <input id="name" maxlength="14" placeholder="닉네임" autocomplete="off" spellcheck="false">
+      <div class="panel-title">시작 무기</div>
+      <div id="weapons" class="weapons"></div>
+      <button class="btn-play" id="btn-play"><span>빠른 대전</span><small id="queue-info">16인 · 빈자리는 봇</small></button>
+      <div class="row">
+        <button class="btn" id="btn-create">방 만들기</button>
+        <button class="btn" id="btn-join">방 참가</button>
+      </div>
+      <div class="row practice">
+        <button class="btn" id="btn-practice">연습 모드 (봇)</button>
+        <select id="difficulty" title="봇 난이도">
+          <option value="0">쉬움</option>
+          <option value="1" selected>보통</option>
+          <option value="2">어려움</option>
+        </select>
+      </div>
+      <div id="standalone-note" class="note hidden">오프라인 데모: 이 페이지에서는 봇과의 대전만 가능합니다. 친구와 하려면 서버를 배포하세요.</div>
+    </section>
+
+    <!-- 오른쪽: 퀘스트/정보 -->
+    <section class="panel col-right">
+      <div class="panel-title">일일 퀘스트</div>
+      <div id="quests" class="quests"></div>
+      <div class="panel-title">연속 접속</div>
+      <div id="streak" class="streak"></div>
+      <div class="panel-title">게임 방법</div>
+      <ul class="howto">
+        <li><b>몬스터</b> 사냥 → 레벨업, <b>상자</b> → 장비</li>
+        <li>2·4·6분에 나오는 <b>오브</b>를 차지하세요</li>
+        <li>오브를 들고 있으면 <b>점수</b>가 쌓임 · 위치 공개</li>
+        <li>3개 모으고 15초 버티면 <b>즉시 승리</b></li>
+      </ul>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <button class="link" id="btn-help">조작법</button>
+    <button class="link" id="btn-settings">설정</button>
+    <span class="sep">·</span>
+    <span class="muted">이용약관 · 개인정보처리방침 (준비 중)</span>
+    <div id="ad-menu" class="ad-slot hidden">광고 자리 (300×250)</div>
+  </footer>
+</div>
+
+<!-- ================= 로비 (대기실) ================= -->
+<div id="lobby" class="overlay hidden">
+  <div class="modal lobby-box">
+    <div class="modal-title" id="lobby-title">곧 시작합니다</div>
+    <div class="lobby-count"><span id="lobby-countdown">-</span><small id="lobby-sub"></small></div>
+    <div id="lobby-code" class="lobby-code hidden"></div>
+    <div id="lobby-players" class="lobby-players"></div>
+    <div id="lobby-host" class="lobby-host hidden">
+      <label><input type="checkbox" id="lobby-bots" checked> 빈자리 봇으로 채우기</label>
+      <select id="lobby-botlevel"><option value="0">쉬움</option><option value="1" selected>보통</option><option value="2">어려움</option></select>
+      <button class="btn-play small" id="lobby-start">게임 시작</button>
+    </div>
+    <div class="lobby-tip" id="lobby-tip"></div>
+    <button class="btn-ghost" id="lobby-leave">나가기</button>
+  </div>
+</div>
+
+<!-- ================= 게임 HUD ================= -->
+<div id="hud" class="hidden">
+  <div class="hud-top">
+    <div id="timer">10:00</div>
+    <div id="phase"></div>
+    <div id="orbstatus"></div>
+  </div>
+  <div class="hud-left">
+    <div id="mystats"></div>
+    <div id="leader"></div>
+  </div>
+  <div class="hud-right">
+    <canvas id="minimap" width="200" height="200"></canvas>
+    <div id="killfeed"></div>
+  </div>
+  <div id="announce"></div>
+  <div id="ritual" class="hidden"></div>
+  <div id="prompt" class="hidden"></div>
+  <div class="hud-bottom">
+    <div id="gear"></div>
+    <div class="bars">
+      <div class="hpbar"><div id="hpfill"></div><div id="shieldfill"></div><span id="hptext"></span></div>
+      <div class="xpbar"><div id="xpfill"></div><span id="lvtext"></span></div>
+      <div id="skills"></div>
+    </div>
+  </div>
+  <div id="ping"></div>
+  <div id="deathscreen" class="hidden">
+    <div class="death-title">쓰러졌습니다</div>
+    <div class="death-sub">부활까지 <b id="death-timer">5.0</b>초</div>
+    <div class="death-spec" id="death-spec"></div>
+    <div class="death-tip">오브를 가진 사람을 노리세요. 죽어도 레벨은 유지됩니다.</div>
+  </div>
+</div>
+
+<!-- ================= 게임 중 메뉴 ================= -->
+<div id="pause" class="overlay hidden">
+  <div class="modal small">
+    <div class="modal-title">일시 메뉴</div>
+    <p class="muted">게임은 계속 진행 중입니다.</p>
+    <div class="row">
+      <button class="btn" id="pause-resume">계속하기</button>
+      <button class="btn danger" id="pause-quit">나가기</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= 결과 화면 ================= -->
+<div id="end" class="overlay hidden">
+  <div class="modal end-box">
+    <div id="end-title" class="end-title">승리</div>
+    <div id="end-sub" class="end-sub"></div>
+    <div id="end-stats" class="end-stats"></div>
+    <div id="end-rewards" class="end-rewards"></div>
+    <div id="end-quests" class="end-quests"></div>
+    <div id="end-table" class="end-table"></div>
+    <div class="row">
+      <button class="btn-ad" id="end-ad">▶ 광고 보고 오볼 2배</button>
+      <button class="btn-play small" id="end-again">다시 하기</button>
+      <button class="btn" id="end-menu">메뉴로</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================= 상점 ================= -->
+<div id="store" class="overlay hidden">
+  <div class="modal store-box">
+    <div class="modal-head">
+      <div class="modal-title" id="store-title">상점</div>
+      <div class="wallet"><span class="coin obol">◎ <b class="w-obols">0</b></span><span class="coin gem">◆ <b class="w-gems">0</b></span></div>
+      <button class="x" data-close="store">✕</button>
+    </div>
+    <div id="store-tabs" class="tabs"></div>
+    <div id="store-grid" class="store-grid"></div>
+    <div class="muted small-note">치장품은 겉모습만 바꿉니다. 전투 능력에는 영향이 없습니다.</div>
+  </div>
+</div>
+
+<div id="gemshop" class="overlay hidden">
+  <div class="modal small">
+    <div class="modal-head"><div class="modal-title">영혼석 충전</div><button class="x" data-close="gemshop">✕</button></div>
+    <div id="gem-packs" class="gem-packs"></div>
+    <div class="sub-card">
+      <b>올림포스 패스</b> 월 ₩4,900
+      <small>광고 제거 · 매달 영혼석 300 · 오볼 +50% · 전용 스킨</small>
+    </div>
+    <p class="muted">결제는 서버 배포와 결제 연동(토스페이먼츠/Stripe) 후 열립니다.</p>
+    <button class="btn" id="gem-trial">체험용 영혼석 500 받기 (실제 결제 아님)</button>
+  </div>
+</div>
+
+<div id="login" class="overlay hidden">
+  <div class="modal small">
+    <div class="modal-head"><div class="modal-title">로그인</div><button class="x" data-close="login">✕</button></div>
+    <p>로그인하면 다른 기기에서도 치장품과 기록이 유지됩니다.</p>
+    <button class="btn oauth google" data-oauth="Google">Google로 계속하기</button>
+    <button class="btn oauth discord" data-oauth="Discord">Discord로 계속하기</button>
+    <p class="muted">지금은 게스트로 플레이 중이며, 진행 상황은 이 브라우저에 저장됩니다.</p>
+  </div>
+</div>
+
+<div id="joinroom" class="overlay hidden">
+  <div class="modal small">
+    <div class="modal-head"><div class="modal-title">방 참가</div><button class="x" data-close="joinroom">✕</button></div>
+    <input id="room-code" maxlength="4" placeholder="방 코드 (예: K7Q2)" autocomplete="off">
+    <button class="btn-play small" id="room-join-go">참가</button>
+  </div>
+</div>
+
+<div id="help" class="overlay hidden">
+  <div class="modal">
+    <div class="modal-head"><div class="modal-title">조작법</div><button class="x" data-close="help">✕</button></div>
+    <div class="keys">
+      <div><kbd>WASD</kbd> 이동</div>
+      <div><kbd>마우스</kbd> 조준</div>
+      <div><kbd>좌클릭</kbd> 기본 공격 (누르고 있으면 연속)</div>
+      <div><kbd>우클릭</kbd> 무기 스킬 1</div>
+      <div><kbd>Q</kbd> 무기 스킬 2</div>
+      <div><kbd>R</kbd> 궁극기 (게이지 100%)</div>
+      <div><kbd>E</kbd> 갑옷 스킬</div>
+      <div><kbd>Space</kbd> 신발 스킬 (대시 등)</div>
+      <div><kbd>F</kbd> 상자 열기 / 장비 줍기</div>
+      <div><kbd>Esc</kbd> 메뉴</div>
+    </div>
+    <div id="help-weapons" class="help-weapons"></div>
+  </div>
+</div>
+
+<div id="settings" class="overlay hidden">
+  <div class="modal small">
+    <div class="modal-head"><div class="modal-title">설정</div><button class="x" data-close="settings">✕</button></div>
+    <label class="set-row">효과음 <input type="range" id="set-volume" min="0" max="1" step="0.05"></label>
+    <label class="set-row"><input type="checkbox" id="set-shake"> 화면 흔들림</label>
+  </div>
+</div>
+
+<div id="adbreak" class="overlay hidden">
+  <div class="modal small center">
+    <div class="modal-title">광고</div>
+    <p class="muted">여기에 광고 SDK(CrazyGames / AdinPlay 등)가 들어갑니다.</p>
+    <div class="ad-count" id="ad-count">3</div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script type="module" src="./main.js"></script>
+</body>
+</html>

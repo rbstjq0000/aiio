@@ -1,0 +1,27 @@
+{
+  "name": "styx-io",
+  "version": "0.1.0",
+  "description": "STYX.io - 로그라이크 배틀로얄 io 게임",
+  "main": "server/index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node tests/design.test.js && node tests/server.test.js",
+    "build:demo": "node tools/build-standalone.js",
+    "gen:doc": "node tools/gen-weapon-doc.js"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "playwright": "1.56"
+  },
+  "type": "module",
+  "private": true
+}
