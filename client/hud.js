@@ -5,7 +5,7 @@ import { WEAPONS, ARMORS, BOOTS, SPELLS, RARITIES, ORBS, itemDef, itemName, KIND
 const $ = (id) => document.getElementById(id);
 
 const SLOTS = [
-  { k: 'basic', key: '우클릭' },
+  { k: 'basic', key: 'A·우클릭' },
   { k: 'q', key: 'Q' },
   { k: 'w', key: 'W' },
   { k: 'e', key: 'E' },
@@ -213,11 +213,11 @@ export class Hud {
         const w = WEAPONS[game.ui.gear.weapon.type][best.type];
         const ng = runeResult(cg, best.rarity);
         const up = ng >= 3 && w.up && w.up[ng] ? ` · ${w.up[ng].upDesc}` : '';
-        html = `<kbd>클릭</kbd> <b style="color:${rc.color}">${rc.name} ${best.type.toUpperCase()} 각인</b> ${ng >= 0 ? `<em class="up">▲${ng === cg + 1 && best.rarity === cg ? ' 합성' : ''}</em>` : '<em class="down">사용 불가 (더 낮은 등급)</em>'}<small>${w.name}: ${RARITIES[cg].name} → ${ng >= 0 ? `<b style="color:${RARITIES[ng].color}">${RARITIES[ng].name}</b>${up}` : '-'}</small>`;
+        html = `<kbd>우클릭</kbd> <b style="color:${rc.color}">${rc.name} ${best.type.toUpperCase()} 각인</b> ${ng >= 0 ? `<em class="up">▲${ng === cg + 1 && best.rarity === cg ? ' 합성' : ''}</em>` : '<em class="down">사용 불가 (더 낮은 등급)</em>'}<small>${w.name}: ${RARITIES[cg].name} → ${ng >= 0 ? `<b style="color:${RARITIES[ng].color}">${RARITIES[ng].name}</b>${up}` : '-'}</small>`;
       } else {
         const cur = game.ui.gear[best.kind];
         const better = best.rarity > cur.rarity ? '<em class="up">▲</em>' : best.rarity < cur.rarity ? '<em class="down">▼</em>' : '';
-        html = `<kbd>클릭</kbd> 장착: <b style="color:${rc.color}">${rc.name} ${best.name}</b> ${better}<small>현재: ${itemName(cur)}</small>`;
+        html = `<kbd>우클릭</kbd> 장착: <b style="color:${rc.color}">${rc.name} ${best.name}</b> ${better}<small>현재: ${itemName(cur)}</small>`;
       }
     } else {
       for (const c of v.chests) {
@@ -225,7 +225,7 @@ export class Hud {
         const d = (c.x - me.x) ** 2 + (c.y - me.y) ** 2;
         if (d < bd) {
           bd = d;
-          html = '<kbd>클릭</kbd> 상자 열기 <small>1초 동안 멈춰 있어야 함 · 맞으면 끊김</small>';
+          html = '<kbd>우클릭</kbd> 상자 열기 <small>0.6초 · 움직이면 끊김</small>';
         }
       }
     }

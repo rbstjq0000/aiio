@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import { WEAPONS, ARMORS, BOOTS, SPELLS, GRADE_CD, RARITIES } from '../shared/items.js';
 
 const KEYS = [
-  ['basic', '우클릭'],
+  ['basic', '기본 공격'],
   ['q', 'Q'],
   ['w', 'W'],
   ['e', 'E'],
@@ -25,7 +25,7 @@ let md = '<!-- gen:weapons start -->\n';
 md += '> 이 표는 `node tools/gen-weapon-doc.js`로 shared/items.js에서 자동 생성됨. 직접 고치지 말 것.\n>\n';
 md += '> 기준: 같은 레벨·장비에서 1,000 체력을 근접 무기 약 5초, 원거리·CC 무기 5.5~6초에 처치 (tests/design.test.js가 검증)\n\n';
 for (const w of Object.values(WEAPONS)) {
-  md += `### ${w.icon} ${w.name} (${w.role}) — 기본 공격 DPS 약 ${dps(w)}\n`;
+  md += `### ${w.icon} ${w.name} (${w.role}) — 기본 공격 DPS 약 ${dps(w)}${w.hp ? ` · 체력 ×${w.hp}` : ''}${w.speed ? ` · 이동 ×${w.speed}` : ''}\n`;
   md += '| 키 | 스킬 | 한 줄 설명 | 수치 | 쿨타임 | 영웅 강화 | 전설 강화 |\n|---|---|---|---|---|---|---|\n';
   for (const [k, label] of KEYS) {
     const sk = w[k];

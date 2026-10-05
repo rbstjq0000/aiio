@@ -26,6 +26,7 @@ export const WEAPONS = {
     role: '근접 브루저',
     color: '#ff8a4d',
     range: 100,
+    hp: 1.25, // 근접은 붙기 전에 맞으니 체력이 더 많음 (롤의 근접 챔피언처럼)
     basic: {
       name: '베기',
       type: 'melee',
@@ -43,14 +44,14 @@ export const WEAPONS = {
       up: { 3: { dot: { dmg: 50, t: 3 }, upDesc: '출혈: 3초간 50 추가 피해' }, 4: { twice: true, upDesc: '한 번 더 회전 (60% 피해)' } },
     },
     w: {
-      name: '결정타', icon: '💥', type: 'empower', haste: 0.3, hasteT: 1.5, bonus: 90, slow: { amt: 0.4, t: 1 }, window: 4, cd: 7,
+      name: '결정타', icon: '💥', type: 'empower', haste: 0.45, hasteT: 2, bonus: 90, slow: { amt: 0.4, t: 1 }, window: 4, cd: 7,
       hint: '이동 속도가 빨라지고, 다음 기본 공격이 강해짐',
       up: { 3: { stun: 0.5, upDesc: '강화 공격이 0.5초 기절' }, 4: { resetOnKill: true, bonus: 115, upDesc: '피해 증가, 처치하면 쿨타임 초기화' } },
     },
     e: {
-      name: '포획', icon: '🪝', type: 'pull', windup: 0.25, dur: 0.4, range: 290, arc: 1.2, dmg: 40, slow: { amt: 0.4, t: 1 }, moveMult: 0.3, cd: 11,
+      name: '포획', icon: '🪝', type: 'pull', windup: 0.25, dur: 0.4, range: 320, arc: 1.2, dmg: 40, slow: { amt: 0.4, t: 1 }, moveMult: 0.3, cd: 9,
       hint: '앞쪽 부채꼴의 적을 내 앞으로 끌어당김',
-      up: { 3: { range: 370, upDesc: '사거리 +80' }, 4: { stun: 0.4, upDesc: '끌려온 적 0.4초 기절' } },
+      up: { 3: { range: 400, upDesc: '사거리 +80' }, 4: { stun: 0.4, upDesc: '끌려온 적 0.4초 기절' } },
     },
     r: { name: '대지 가르기', icon: '⛰', type: 'line', windup: 0.5, len: 560, width: 96, dmg: 320, stun: 1.0, dur: 0.75, moveMult: 0, hint: '0.5초 뒤 앞으로 땅을 가르는 충격파, 기절' },
   },
@@ -61,6 +62,8 @@ export const WEAPONS = {
     role: '암살자',
     color: '#b28cff',
     range: 78,
+    hp: 1.08,
+    speed: 1.06,
     basic: {
       name: '연속 찌르기',
       type: 'melee',
@@ -95,7 +98,7 @@ export const WEAPONS = {
     role: '원거리 딜러',
     color: '#8cff6b',
     range: 760,
-    basic: { name: '사격', type: 'proj', windup: 0.1, dur: 0.5, moveMult: 0.85, speed: 1200, range: 760, dmg: 65, r: 7, knock: 60 },
+    basic: { name: '사격', type: 'proj', windup: 0.1, dur: 0.5, moveMult: 0.85, speed: 1200, range: 760, dmg: 70, r: 7, knock: 60 },
     q: {
       name: '신비한 화살', icon: '➶', type: 'proj', windup: 0.12, dur: 0.3, speed: 1750, range: 950, dmg: 130, r: 9, refundAll: 1, cd: 5,
       hint: '빠르고 가는 화살. 맞히면 모든 스킬 쿨타임 1초 감소',
@@ -170,6 +173,8 @@ export const WEAPONS = {
     role: '돌격',
     color: '#ffe066',
     range: 150,
+    hp: 1.18,
+    speed: 1.03,
     basic: {
       name: '찌르기',
       type: 'melee',
@@ -178,7 +183,7 @@ export const WEAPONS = {
       combo: [{ dmg: 80, range: 150, arc: 0.55, windup: 0.09, dur: 0.48, lunge: 30, knock: 90 }],
     },
     q: {
-      name: '용의 일격', icon: '🐉', type: 'line', windup: 0.22, len: 340, width: 56, dmg: 140, dur: 0.38, moveMult: 0.2, flagDash: true, cd: 7,
+      name: '용의 일격', icon: '🐉', type: 'line', windup: 0.22, len: 340, width: 56, dmg: 140, dur: 0.38, moveMult: 0.2, flagDash: true, cd: 6,
       hint: '앞을 찌름. 찌르는 방향에 내 깃발이 있으면 깃발까지 돌진하며 적을 띄움(0.6초 기절)',
       up: { 3: { len: 400, upDesc: '사거리 +60' }, 4: { dmg: 190, slow: { amt: 0.3, t: 1.5 }, upDesc: '피해 증가 + 둔화' } },
     },

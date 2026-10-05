@@ -29,6 +29,8 @@ function killTime(weapon, grade = 0) {
   d.x = PREF[weapon];
   d.y = 0;
   a.invulnT = d.invulnT = 0;
+  // 처치 시간은 체력 1,000 기준 (직업별 체력 보정 제외)
+  d.maxHp = d.hp = 1000;
   a.ult = 0;
   a.grade = { q: grade, w: grade, e: grade };
   const t0 = g.time;

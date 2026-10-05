@@ -62,9 +62,9 @@ export const KB_MAX = 1400;
 
 // 상자/장비
 export const CHEST_COUNT = 30;
-export const CHEST_OPEN = 1.0;
+export const CHEST_OPEN = 0.6; // 상자 여는 시간 (맞아도 안 끊김, 움직이면 끊김)
 export const CHEST_RESPAWN = 60;
-export const INTERACT_RANGE = 70;
+export const INTERACT_RANGE = 90;
 
 // 입력 누름 횟수 카운터 인덱스: [좌클릭 공격, Q, W, E, R, D, F, 상호작용(우클릭으로 상자/장비)]
 export const PRESS = { atk: 0, q: 1, w: 2, e: 3, r: 4, d: 5, f: 6, act: 7 };

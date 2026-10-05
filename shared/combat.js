@@ -57,21 +57,36 @@ export const CombatMixin = {
   },
 
   // ---------------- 무기 스킬 ----------------
+  // 기본 공격 대상: 클라이언트가 고른 적이 유효하면 그쪽으로 (롤처럼 빗나가지 않음)
+  basicTarget(p) {
+    const id = p.input.at;
+    if (!id) return null;
+    const u = this.byId.get(id);
+    if (!u || !u.alive || u.team === p.team || u === p) return null;
+    if (u.isPlayer && u.st.invisT > 0) return null;
+    const reach = this.weapon(p).range + u.r + 120;
+    if (dist2(u.x, u.y, p.x, p.y) > reach * reach) return null;
+    return u;
+  },
+
   tryBasic(p) {
     if (!this.canAct(p)) return false;
     const w = this.weapon(p);
     const sk = w.basic;
+    const tgt = this.basicTarget(p);
+    if (tgt) p.aimBasic = Math.atan2(tgt.y - p.y, tgt.x - p.x);
+    const dir = tgt ? p.aimBasic : p.aim;
     this.breakStealth(p);
     if (sk.type === 'melee') {
       const step = p.comboT > 0 ? p.combo % sk.combo.length : 0;
       const c = sk.combo[step];
       p.combo = step + 1;
       p.comboT = 0;
-      p.act = { key: 'basic', sk, c, step, t: 0, hitAt: c.windup, dur: c.dur, done: false, dir: p.aim, moveMult: sk.moveMult };
-      if (c.lunge) this.lunge(p, p.aim, c.lunge);
-      this.emit({ e: 'swing', id: p.id, s: step, a: r2(p.aim), x: Math.round(p.x), y: Math.round(p.y) });
+      p.act = { key: 'basic', sk, c, step, t: 0, hitAt: c.windup, dur: c.dur, done: false, dir, moveMult: sk.moveMult, tgt: tgt ? tgt.id : 0 };
+      if (c.lunge) this.lunge(p, dir, c.lunge);
+      this.emit({ e: 'swing', id: p.id, s: step, a: r2(dir), x: Math.round(p.x), y: Math.round(p.y) });
     } else {
-      p.act = { key: 'basic', sk, t: 0, hitAt: sk.windup, dur: sk.dur, done: false, dir: p.aim, moveMult: sk.moveMult };
+      p.act = { key: 'basic', sk, t: 0, hitAt: sk.windup, dur: sk.dur, done: false, dir, moveMult: sk.moveMult, tgt: tgt ? tgt.id : 0 };
     }
     return true;
   },
@@ -350,6 +365,12 @@ export const CombatMixin = {
     }
     if (!a.done && a.t >= a.hitAt) {
       a.done = true;
+      // 대상 지정 공격: 준비 동작 동안 움직인 대상 쪽으로 다시 조준
+      if (a.tgt) {
+        const u = this.byId.get(a.tgt);
+        if (u && u.alive) a.dir = Math.atan2(u.y - p.y, u.x - p.x);
+        else a.tgt = 0;
+      }
       this.performAction(p, a);
     }
     if (p.act === a && a.t >= a.dur) {
@@ -365,7 +386,7 @@ export const CombatMixin = {
     const wtype = p.gear.weapon.type;
     switch (sk.type) {
       case 'melee':
-        this.meleeHit(p, a.dir, a.c, kind);
+        this.meleeHit(p, a.dir, a.c, kind, a.tgt);
         break;
       case 'proj': {
         const pk = (PROJ_KIND_FOR[wtype] && PROJ_KIND_FOR[wtype][a.key]) || 'arrow';
@@ -373,7 +394,9 @@ export const CombatMixin = {
         const group = n > 1 ? new Set() : null;
         for (let i = 0; i < n; i++) this.spawnProj(p, {
           group,
-          angle: n > 1 ? p.aim + (i / (n - 1) - 0.5) * sk.spread : p.aim,
+          angle: n > 1 ? p.aim + (i / (n - 1) - 0.5) * sk.spread : a.key === 'basic' ? a.dir : p.aim,
+          homing: a.key === 'basic' ? a.tgt : 0,
+          homeTurn: 25,
           speed: sk.speed,
           range: sk.range,
           dmg: sk.dmg * this.powerMult(p, kind, key),
@@ -515,7 +538,7 @@ export const CombatMixin = {
     p.kby += Math.sin(dir) * dist * C.KB_DAMP;
   },
 
-  meleeHit(p, dir, c, kind) {
+  meleeHit(p, dir, c, kind, tgtId = 0) {
     const dmg = c.dmg * this.powerMult(p, kind, 'basic');
     const emp = kind === 'basic' && p.st.empT > 0 ? p.st.emp : null;
     let hitAny = false;
@@ -523,7 +546,8 @@ export const CombatMixin = {
       if (!u.alive || u === p || u.team === p.team) continue;
       const dx = u.x - p.x;
       const dy = u.y - p.y;
-      const reach = c.range + u.r;
+      // 지정한 대상은 살짝 멀어져도 맞음 (준비 동작 중 한 걸음 물러난 정도)
+      const reach = c.range + u.r + (u.id === tgtId ? 30 : 0);
       const d2 = dx * dx + dy * dy;
       if (d2 > reach * reach) continue;
       const d = Math.sqrt(d2);
@@ -635,10 +659,6 @@ export const CombatMixin = {
     if (dmg <= 0) return 0;
     tgt.hp -= dmg;
     tgt.lastDmgT = this.time;
-    if (tgt.channel) {
-      tgt.channel = null;
-      this.emit({ e: 'interrupt', id: tgt.id, x: Math.round(tgt.x), y: Math.round(tgt.y) });
-    }
     if (src && src.isPlayer && src !== tgt) {
       src.dmgDealt += tgt.isPlayer ? dmg : 0;
       src.ult = Math.min(100, src.ult + dmg * C.ULT_PER_DMG * (tgt.isPlayer ? 1 : 0.3) * (src.orbs.includes(2) ? 2 : 1));
@@ -852,6 +872,7 @@ export const CombatMixin = {
       splash: o.splash || 0,
       rootAll: !!o.rootAll,
       homing: o.homing || 0,
+      homeTurn: o.homeTurn || 6,
       group: o.group || null,
       big: !!o.big,
       color: owner.isPlayer ? owner.gear.weapon.type : '',
@@ -872,7 +893,7 @@ export const CombatMixin = {
         if (t && t.alive) {
           const want = Math.atan2(t.y - pr.y, t.x - pr.x);
           const cur = Math.atan2(pr.vy, pr.vx);
-          const turn = Math.max(-6 * dt, Math.min(6 * dt, angleDiff(cur, want)));
+          const turn = Math.max(-pr.homeTurn * dt, Math.min(pr.homeTurn * dt, angleDiff(cur, want)));
           pr.vx = Math.cos(cur + turn) * pr.speed;
           pr.vy = Math.sin(cur + turn) * pr.speed;
         }

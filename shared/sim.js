@@ -61,7 +61,7 @@ function makeStatus() {
 export const PRESS = C.PRESS;
 
 export function emptyInput() {
-  return { seq: 0, mx: 0, my: 0, aim: 0, atk: false, cx: 0, cy: 0, ti: 0, p: new Array(C.PRESS_N).fill(0) };
+  return { seq: 0, mx: 0, my: 0, aim: 0, atk: false, cx: 0, cy: 0, ti: 0, at: 0, p: new Array(C.PRESS_N).fill(0) };
 }
 
 const num = (v, d = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
@@ -81,6 +81,7 @@ export function sanitizeInput(raw, prev) {
   const pr = Array.isArray(raw.p) ? raw.p : [];
   for (let i = 0; i < C.PRESS_N; i++) inp.p[i] = Math.max(prev.p[i], int(pr[i], prev.p[i]));
   inp.ti = int(raw.ti, 0);
+  inp.at = int(raw.at, 0); // 롤식 기본 공격 대상 (우클릭/A+클릭으로 고른 적)
   return inp;
 }
 
@@ -429,6 +430,7 @@ export class Game {
 
     if (p.act) this.updateAction(p, dt);
     this.updateChannel(p, dt);
+    this.autoPickup(p);
 
     p.freeSpeed = this.playerSpeed(p, false);
     const speed = this.playerSpeed(p, true);
@@ -479,11 +481,12 @@ export class Game {
   recomputeStats(p) {
     const armor = ARMORS[p.gear.armor.type];
     const ratio = p.maxHp > 0 ? p.hp / p.maxHp : 1;
-    p.maxHp = Math.round(C.BASE_HP * C.levelMult(p.level) * armor.hpMult * RARITIES[p.gear.armor.rarity].mult * (1 + C.ORB_HP_PER * p.orbs.length));
+    const wd = WEAPONS[p.gear.weapon.type];
+    p.maxHp = Math.round(C.BASE_HP * (wd.hp || 1) * C.levelMult(p.level) * armor.hpMult * RARITIES[p.gear.armor.rarity].mult * (1 + C.ORB_HP_PER * p.orbs.length));
     p.hp = Math.min(p.maxHp, Math.max(1, ratio * p.maxHp));
     const boots = BOOTS[p.gear.boots.type];
     const bm = RARITIES[p.gear.boots.rarity].mult;
-    p.speedMult = armor.speedMult * (1 + boots.speed * bm) * (1 + C.ORB_SPEED_PER * p.orbs.length);
+    p.speedMult = (wd.speed || 1) * armor.speedMult * (1 + boots.speed * bm) * (1 + C.ORB_SPEED_PER * p.orbs.length);
     p.cdMult = (p.orbs.includes(2) ? 0.7 : 1) * (1 - boots.cdr * bm);
     p.dr = boots.dr * bm;
     p.uiVer++;
@@ -520,6 +523,22 @@ export class Game {
     else this.startChannel(p, c);
   }
 
+  isUpgrade(p, it) {
+    return it.kind === 'skill' ? runeResult(p.grade[it.type], it.rarity) >= 0 : it.rarity > p.gear[it.kind].rarity;
+  }
+
+  // 밟고 지나가면 자동으로 줍기: 쓸 수 있는 각인, 지금보다 높은 등급의 갑옷·신발
+  autoPickup(p) {
+    if (!this.items.length || p.st.stunT > 0) return;
+    for (const gi of this.items) {
+      if (this.time - gi.t < 0.6 || dist2(gi.x, gi.y, p.x, p.y) > (p.r + 24) ** 2) continue;
+      if (this.isUpgrade(p, gi.item)) {
+        this.equip(p, gi);
+        return;
+      }
+    }
+  }
+
   startChannel(p, c) {
     if (p.act || p.st.stunT > 0) return;
     p.channel = { id: c.id, t: 0 };
@@ -542,8 +561,10 @@ export class Game {
       c.respawnT = C.CHEST_RESPAWN;
       p.chestsOpened++;
       const it = rollItem(this.rng, this.time);
-      this.dropItem(it, c.x, c.y + 30);
+      const gi = this.dropItem(it, c.x, c.y + 30);
       this.emit({ e: 'chest', id: c.id, x: c.x, y: c.y, r: it.rarity, by: p.id });
+      // 연 사람에게 쓸모 있으면 바로 장착 (아니면 바닥에 남김)
+      if (this.isUpgrade(p, it)) this.equip(p, gi);
     }
   }
 
@@ -1070,7 +1091,7 @@ export class Game {
         p.id,
         R(p.x),
         R(p.y),
-        R(p.aim * 100) / 100,
+        R((p.act && p.act.key === 'basic' ? p.act.dir : p.aim) * 100) / 100, // 기본 공격 중엔 대상 쪽을 봄
         Math.ceil(p.hp),
         p.maxHp,
         this.playerFlags(p),

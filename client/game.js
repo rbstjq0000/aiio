@@ -4,6 +4,7 @@ import { stepBody, startDash, resolveStatic } from '../shared/physics.js';
 import { NavGrid } from '../shared/nav.js';
 
 const NAV_CACHE = new Map();
+const ATTACK_CURSOR = `url("data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28"><path d="M3 3 L17 17 M17 13 L13 17 M15 19 L19 15 M18 18 L24 24" stroke="#ff3d4f" stroke-width="3" stroke-linecap="round"/><path d="M3 3 L17 17" stroke="#fff" stroke-width="1"/></svg>')}") 3 3, crosshair`;
 import { WEAPONS, ARMORS, BOOTS, SPELLS, RARITIES, ORBS, WEAPON_IDS, ARMOR_IDS, BOOT_IDS, KIND_IDS, SLOT_KINDS, itemDef } from '../shared/items.js';
 import { MONSTER_TYPES } from '../shared/monsters.js';
 import { PROJ_KINDS, AREA_KINDS, ALTAR_STATE, PF } from '../shared/sim.js';
@@ -138,7 +139,12 @@ export class GameClient {
     this.input.counters = new Array(C.PRESS_N).fill(0);
     this.lastSpell = [0, 0];
     this.interactTarget = 0;
+    this.atkTarget = 0;
+    this.atkMove = false;
+    this.predAct = null;
     this.input.onMoveClick = (sx, sy) => this.moveClick(sx, sy);
+    this.input.onAttackClick = (sx, sy) => this.attackClick(sx, sy);
+    this.input.onPress = (k) => this.onKeyPress(k);
     this.running = true;
     this.lastFrame = performance.now();
     this.acc = 0;
@@ -232,13 +238,86 @@ export class GameClient {
     return [r.cam.x + (sx - r.w / 2) / r.zoom, r.cam.y + (sy - r.h / 2) / r.zoom];
   }
 
-  // 좌클릭: 상자/장비 위면 가서 열기·줍기, 아니면 그 지점으로 이동
+  // 커서 근처의 적 (플레이어·몬스터). 롤처럼 몸통을 대충 눌러도 잡히게 여유를 둠
+  enemyAt(wx, wy, pad = 28) {
+    const s = this.latest;
+    if (!s) return null;
+    let best = null;
+    let bd = Infinity;
+    for (const p of s.pl.values()) {
+      if (p.id === this.meId || p.flags & PF.INVIS) continue;
+      const d = Math.hypot(p.x - wx, p.y - wy);
+      if (d < C.PLAYER_R + pad && d < bd) {
+        bd = d;
+        best = { id: p.id, x: p.x, y: p.y, r: C.PLAYER_R };
+      }
+    }
+    for (const m of s.mo.values()) {
+      const d = Math.hypot(m.x - wx, m.y - wy);
+      if (d < m.r + pad && d < bd) {
+        bd = d;
+        best = { id: m.id, x: m.x, y: m.y, r: m.r };
+      }
+    }
+    return best;
+  }
+
+  // 위치 기준 가장 가까운 적 (공격 이동용)
+  nearestEnemy(x, y, range, playersFirst = true) {
+    const s = this.latest;
+    if (!s) return null;
+    let best = null;
+    let bd = Infinity;
+    for (const p of s.pl.values()) {
+      if (p.id === this.meId || p.flags & PF.INVIS) continue;
+      const d = Math.hypot(p.x - x, p.y - y) * (playersFirst ? 0.8 : 1);
+      if (d < range && d < bd) {
+        bd = d;
+        best = { id: p.id, x: p.x, y: p.y, r: C.PLAYER_R };
+      }
+    }
+    for (const m of s.mo.values()) {
+      const d = Math.hypot(m.x - x, m.y - y);
+      if (d < range && d < bd) {
+        bd = d;
+        best = { id: m.id, x: m.x, y: m.y, r: m.r };
+      }
+    }
+    return best;
+  }
+
+  entity(id) {
+    const s = this.latest;
+    if (!s) return null;
+    const p = s.pl.get(id);
+    if (p) return p.flags & PF.INVIS ? null : { id, x: p.x, y: p.y, r: C.PLAYER_R };
+    const m = s.mo.get(id);
+    return m ? { id, x: m.x, y: m.y, r: m.r } : null;
+  }
+
+  myRange() {
+    return this.ui ? WEAPONS[this.ui.gear.weapon.type].range : 100;
+  }
+
+  // 우클릭: 적 = 쫓아가며 공격 / 상자·장비 = 가서 열기·줍기 / 땅 = 이동
   moveClick(sx, sy) {
     const [wx, wy] = this.mouseWorld(sx, sy);
     const s = this.latest;
+    this.atkMove = false;
+    const foe = this.enemyAt(wx, wy);
+    if (foe) {
+      this.atkTarget = foe.id;
+      this.interactTarget = 0;
+      this.moveTarget = null;
+      this.path = null;
+      this.moveMarker = { x: foe.x, y: foe.y, t: 0, attack: true };
+      return;
+    }
+    this.atkTarget = 0;
     let target = null;
     if (s) {
-      let bd = 45 * 45;
+      // 장비·상자는 넉넉하게 (근처를 눌러도 잡힘)
+      let bd = 70 * 70;
       for (const g of s.it) {
         const d = (g[4] - wx) ** 2 + (g[5] - wy) ** 2;
         if (d < bd) {
@@ -265,6 +344,37 @@ export class GameClient {
       this.interactTarget = 0;
       this.moveMarker = { x: wx, y: wy, t: 0 };
     }
+  }
+
+  // A + 좌클릭: 적을 누르면 그 적, 빈 곳이면 커서 근처 → 내 근처 적. 없으면 그쪽으로 가다가 만나는 적 공격
+  attackClick(sx, sy) {
+    const [wx, wy] = this.mouseWorld(sx, sy);
+    const px = this.pred ? this.pred.x : this.me ? this.me.x : 0;
+    const py = this.pred ? this.pred.y : this.me ? this.me.y : 0;
+    this.interactTarget = 0;
+    const foe = this.enemyAt(wx, wy) || this.nearestEnemy(wx, wy, 260) || this.nearestEnemy(px, py, this.myRange() + 260);
+    if (foe) {
+      this.atkTarget = foe.id;
+      this.atkMove = false;
+      this.moveTarget = null;
+      this.path = null;
+      this.moveMarker = { x: foe.x, y: foe.y, t: 0, attack: true };
+    } else {
+      this.atkTarget = 0;
+      this.atkMove = true;
+      this.setDest(wx, wy);
+      this.moveMarker = { x: wx, y: wy, t: 0, attack: true };
+    }
+  }
+
+  // 스킬 키: 이동 예측에 스킬 시전 중 감속을 반영 (서버와 어긋나 튀는 것 방지)
+  onKeyPress(k) {
+    if (!this.ui || !this.me) return;
+    const i = { q: 0, w: 1, e: 2 }[k];
+    if (i == null && k !== 'r') return;
+    if (i != null && this.me.cd[i] > 0) return;
+    const sk = WEAPONS[this.ui.gear.weapon.type][k];
+    if (sk.moveMult != null && sk.dur) this.predAct = { t: sk.dur, mult: sk.moveMult };
   }
 
   // 이동 목적지: 벽이 가로막으면 길찾기로 돌아가는 경로를 만듦 (롤처럼)
@@ -307,15 +417,49 @@ export class GameClient {
     if (this.input.stopPressed) {
       this.moveTarget = null;
       this.path = null;
+      this.atkTarget = 0;
+      this.atkMove = false;
       this.input.stopPressed = false;
     }
+    // 롤식 기본 공격: 대상이 사거리 밖이면 쫓아가고, 안이면 멈춰서 계속 공격
+    let atk = false;
+    const range = this.myRange();
+    if (this.atkMove && !this.atkTarget) {
+      const foe = this.nearestEnemy(px, py, range + 220);
+      if (foe) {
+        this.atkTarget = foe.id;
+        this.atkMove = false;
+      } else if (!this.moveTarget) this.atkMove = false;
+    }
+    if (this.atkTarget) {
+      const t = this.entity(this.atkTarget);
+      if (!t) {
+        this.atkTarget = 0;
+      } else {
+        const d = Math.hypot(t.x - px, t.y - py);
+        const reach = range + t.r * 0.8;
+        if (d > reach) {
+          if ((this.chaseT || 0) <= 0 || !this.moveTarget) {
+            this.setDest(t.x, t.y);
+            this.chaseT = 0.12;
+          }
+        } else {
+          this.moveTarget = null;
+          this.path = null;
+          atk = true;
+        }
+      }
+    }
+    if (this.chaseT > 0) this.chaseT -= C.DT;
+    this.autoAtk = atk;
+    this.hoverId = (this.enemyAt(wx, wy) || {}).id || 0;
     let mx = 0;
     let my = 0;
     if (this.moveTarget) {
       const dx = this.moveTarget[0] - px;
       const dy = this.moveTarget[1] - py;
       const d = Math.hypot(dx, dy);
-      const stopAt = this.interactTarget ? 40 : 6;
+      const stopAt = this.interactTarget ? 40 : this.atkTarget ? 4 : 6;
       if (d > stopAt) {
         mx = dx / d;
         my = dy / d;
@@ -334,14 +478,21 @@ export class GameClient {
       }
     }
     const aim = Math.atan2(wy - py, wx - px);
-    this.aim = aim;
+    // 내 캐릭터가 보는 방향: 자동 공격 중이면 대상, 아니면 커서
+    const tgt = atk && this.atkTarget ? this.entity(this.atkTarget) : null;
+    this.aim = tgt ? Math.atan2(tgt.y - py, tgt.x - px) : aim;
     this.seq++;
     const p = this.input.counters.slice();
-    this.t.send({ t: 'in', s: this.seq, mx: Math.round(mx * 1000) / 1000, my: Math.round(my * 1000) / 1000, a: Math.round(aim * 1000) / 1000, k: this.input.atkHeld, cx: Math.round(wx), cy: Math.round(wy), ti: this.interactTarget, p });
+    this.t.send({ t: 'in', s: this.seq, mx: Math.round(mx * 1000) / 1000, my: Math.round(my * 1000) / 1000, a: Math.round(aim * 1000) / 1000, k: atk, at: this.atkTarget, cx: Math.round(wx), cy: Math.round(wy), ti: this.interactTarget, p });
     if (!me || !me.al || !this.pred || !this.ui) return;
     let speed = me.ms;
     const w = WEAPONS[this.ui.gear.weapon.type];
-    if (this.input.atkHeld) speed *= w.basic.moveMult;
+    if (atk) speed *= w.basic.moveMult;
+    if (this.predAct) {
+      speed *= this.predAct.mult;
+      this.predAct.t -= C.DT;
+      if (this.predAct.t <= 0) this.predAct = null;
+    }
     if (me.chn >= 0) speed = 0;
     // 점멸만 즉시 예측 (나머지 이동기는 서버 결과로 보정)
     let sp = null;
@@ -376,6 +527,9 @@ export class GameClient {
       this.acc -= C.DT;
       this.inputTick();
     }
+    // 커서: 적 위나 A 공격 모드면 붉은 공격 커서
+    const cur = this.input.attackMode || this.hoverId ? ATTACK_CURSOR : 'crosshair';
+    if (this.input.canvas.style.cursor !== cur) this.input.canvas.style.cursor = cur;
     const k = Math.exp(-12 * dt);
     this.corr.x *= k;
     this.corr.y *= k;
@@ -534,6 +688,10 @@ export class GameClient {
       walls: this.map.walls,
       camps: this.map.camps,
       moveMarker: this.moveMarker,
+      atkTarget: this.atkTarget,
+      hoverId: this.hoverId,
+      attackMode: this.input.attackMode,
+      myRange: this.myRange(),
       eye: meP ? { x: meP.x, y: meP.y } : { x: cx, y: cy },
       serverTime: latest.tm,
       scores: latest.sc,

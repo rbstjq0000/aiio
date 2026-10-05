@@ -293,6 +293,7 @@ export class Renderer {
     for (const p of v.players) if (!p.me && this.visible(p.x, p.y)) this.drawPlayer(p, v);
     const me = v.players.find((p) => p.me);
     if (me) this.drawPlayer(me, v);
+    this.drawTargeting(v, me);
     this.drawObstacles(v);
     this.drawWalls(v);
     this.drawGroundOrbs(v);
@@ -923,7 +924,7 @@ export class Renderer {
     if (m.t > 0.45) return;
     const ctx = this.ctx;
     const k = m.t / 0.45;
-    const col = m.interact ? '255,207,90' : '120,255,170';
+    const col = m.attack ? '255,70,90' : m.interact ? '255,207,90' : '120,255,170';
     ctx.save();
     ctx.translate(m.x, m.y);
     ctx.globalAlpha = 1 - k;
@@ -937,6 +938,44 @@ export class Renderer {
       ctx.lineTo(r - 9, 0);
       ctx.lineTo(r, 7);
       ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // 롤식 대상 표시: 커서 올린 적(붉은 테두리), 공격 중인 대상(회전하는 표식), A를 누르면 내 사거리
+  drawTargeting(v, me) {
+    const ctx = this.ctx;
+    const find = (id) => v.players.find((p) => p.id === id && !p.me) || v.monsters.find((m) => m.id === id);
+    const rOf = (u) => (u.r || 18) + 8;
+    ctx.save();
+    if (v.attackMode && me) {
+      ctx.beginPath();
+      ctx.arc(me.x, me.y, v.myRange + 18, 0, TAU);
+      ctx.strokeStyle = 'rgba(255,90,100,0.55)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+    const h = v.hoverId && v.hoverId !== v.atkTarget ? find(v.hoverId) : null;
+    if (h) {
+      ctx.beginPath();
+      ctx.arc(h.x, h.y, rOf(h), 0, TAU);
+      ctx.strokeStyle = 'rgba(255,80,90,0.8)';
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+    }
+    const t = v.atkTarget ? find(v.atkTarget) : null;
+    if (t) {
+      ctx.translate(t.x, t.y);
+      ctx.rotate(v.time * 2);
+      ctx.strokeStyle = '#ff3d4f';
+      ctx.lineWidth = 3;
+      const r = rOf(t) + 4;
+      for (let i = 0; i < 4; i++) {
+        ctx.rotate(Math.PI / 2);
+        ctx.beginPath();
+        ctx.arc(0, 0, r, -0.35, 0.35);
+        ctx.stroke();
+      }
     }
     ctx.restore();
   }

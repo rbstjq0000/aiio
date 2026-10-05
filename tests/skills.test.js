@@ -224,5 +224,32 @@ assert.equal(runeResult(4, 4), -1);
   ok("체력 회복: 전투 중에도 조금씩, 4초 뒤 빠르게");
 }
 
+// 롤식 대상 지정 기본 공격: 원거리는 움직이는 대상을 따라가 맞고, 근접은 반 걸음 물러나도 맞음
+{
+  const { g, a, d } = duel('longbow', 600);
+  aimAt(a, 0, 600); // 커서는 엉뚱한 방향
+  a.input.at = d.id;
+  a.input.atk = true;
+  const hp0 = d.hp;
+  for (let t = 0; t < 1.2; t += DT) {
+    d.y += 120 * DT; // 옆으로 걷는 중
+    g.step(DT);
+  }
+  assert.ok(d.hp < hp0, '원거리 대상 지정 공격 적중');
+  ok('대상 지정 기본 공격(원거리): 커서와 무관하게 대상을 맞힘');
+}
+{
+  const { g, a, d } = duel('greatsword', 110);
+  aimAt(a, -300, 0);
+  a.input.at = d.id;
+  a.input.p[PRESS.atk]++;
+  g.step(DT);
+  d.x += 25;
+  const hp0 = d.hp;
+  run(g, 0.3);
+  assert.ok(d.hp < hp0, '근접 대상 지정 공격 적중');
+  ok('대상 지정 기본 공격(근접): 준비 중 물러나도 맞음');
+}
+
 for (const r of results) console.log(`- ${r}`);
 console.log('skills.test 통과');
