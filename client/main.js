@@ -136,7 +136,7 @@ function renderWeapons() {
     b.className = `wcard${profile.d.weapon === id ? ' sel' : ''}`;
     b.style.setProperty('--wc', w.color);
     b.innerHTML = `<div class="wi">${w.icon}</div><div class="wn">${w.name}</div><div class="wr">${w.role}</div>`;
-    b.title = `좌클릭 ${w.basic.name}: ${w.basic.desc}\nQ ${w.q.name}: ${w.q.desc}\nW ${w.w.name}: ${w.w.desc}\nE ${w.e.name}: ${w.e.desc}\nR ${w.r.name}: ${w.r.desc}`;
+    b.title = `우클릭 ${w.basic.name}: ${w.basic.desc}\nQ ${w.q.name}: ${w.q.hint}\nW ${w.w.name}: ${w.w.hint}\nE ${w.e.name}: ${w.e.hint}\nR ${w.r.name}: ${w.r.hint}`;
     b.onclick = () => {
       profile.d.weapon = id;
       profile.save();
@@ -308,7 +308,7 @@ $('room-join-go').onclick = () => {
 
 const TIPS = [
   '오브를 들고 있으면 위치가 모두에게 보입니다. 혼자 다니지 마세요.',
-  '바닥에 빨간 예고가 보이면 우클릭으로 빠져나가거나 E·점멸로 피하세요.',
+  '바닥에 빨간 예고가 보이면 클릭으로 빠져나가거나 E·점멸로 피하세요.',
   '정글 캠프는 잡으면 일정 시간 뒤 다시 생깁니다. 동선을 짜서 돌아보세요.',
   'Q·W·E 스킬 각인이 모두 희귀 이상이면 R도 함께 강해집니다.',
   '기절·속박은 최대 1초, 이후 1.5초는 면역입니다.',
@@ -620,7 +620,12 @@ document.querySelectorAll('[data-oauth]').forEach((b) => (b.onclick = () => toas
 $('btn-help').onclick = () => {
   $('help-weapons').innerHTML = WEAPON_IDS.map((id) => {
     const w = WEAPONS[id];
-    return `<div class="hw" style="border-color:${w.color}55"><b style="color:${w.color}">${w.icon} ${w.name}</b> · ${w.role}<br>좌클릭: ${w.basic.name} — ${w.basic.desc}<br>Q: ${w.q.name} — ${w.q.desc}<br>W: ${w.w.name} — ${w.w.desc}<br>E: ${w.e.name} — ${w.e.desc}<br>R: ${w.r.name} — ${w.r.desc}</div>`;
+    const row = (k) => {
+      const sk = w[k];
+      const up = sk.up ? `<br><small style="opacity:.75">　영웅: ${sk.up[3].upDesc} · 전설: ${sk.up[4].upDesc}</small>` : '';
+      return `<br>${k.toUpperCase()} ${sk.icon || ''} <b>${sk.name}</b> — ${sk.hint || sk.desc}${up}`;
+    };
+    return `<div class="hw" style="border-color:${w.color}55"><b style="color:${w.color}">${w.icon} ${w.name}</b> · ${w.role}<br>우클릭: ${w.basic.name} — ${w.basic.desc}${['q', 'w', 'e', 'r'].map(row).join('')}</div>`;
   }).join('');
   openModal('help');
 };

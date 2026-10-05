@@ -2,7 +2,7 @@
 // 사냥 → 상자/장비 → 오브 쟁탈 → 교전/후퇴
 import { dist2 } from './math.js';
 import { PRESS } from './constants.js';
-import { WEAPONS, SPELLS } from './items.js';
+import { WEAPONS, SPELLS, runeResult } from './items.js';
 
 function useSpell(p, wanted) {
   for (let i = 0; i < 2; i++) {
@@ -25,15 +25,17 @@ export const BOT_NAMES = [
 
 // 무기별 교전 거리와 스킬 사용 조건
 const AI = {
-  greatsword: { pref: 70, reach: 105, q: { max: 150 }, w: { min: 110, max: 320, ground: true }, e: { min: 140, max: 270, aim: true }, r: { max: 480, aim: true } },
-  daggers: { pref: 55, reach: 80, q: { min: 90, max: 240, aim: true }, w: { min: 140, max: 580, aim: true }, e: { max: 120 }, r: { max: 300, exec: true } },
-  longbow: { pref: 430, reach: 740, q: { min: 200, max: 900, aim: true }, w: { max: 400, aim: true }, e: { max: 200, aim: true }, r: { max: 690, ground: true } },
-  firestaff: { pref: 380, reach: 630, q: { max: 640, ground: true }, w: { max: 270, aim: true }, e: { max: 160, escape: true }, r: { max: 690, ground: true } },
-  froststaff: { pref: 360, reach: 630, q: { max: 680, aim: true }, w: { max: 160 }, e: { max: 160, escape: true }, r: { max: 590, ground: true } },
-  spear: { pref: 120, reach: 150, q: { max: 300, aim: true }, w: { max: 150 }, e: { min: 120, max: 300, aim: true }, r: { min: 140, max: 860, aim: true } },
+  greatsword: { pref: 70, reach: 105, q: { max: 175 }, w: { max: 220 }, e: { min: 130, max: 280, aim: true }, r: { max: 480, aim: true } },
+  daggers: { pref: 55, reach: 80, q: { min: 60, max: 650, aim: true }, w: { min: 120, max: 580, aim: true }, e: { min: 160, max: 420, ground: true }, r: { max: 360, exec: true } },
+  longbow: { pref: 430, reach: 740, q: { min: 150, max: 900, aim: true }, w: { max: 560, aim: true }, e: { max: 220, escape: true }, r: { max: 1100, aim: true } },
+  firestaff: { pref: 380, reach: 630, q: { max: 740, aim: true }, w: { max: 660, ground: true }, e: { max: 160, escape: true }, r: { max: 690, ground: true } },
+  froststaff: { pref: 360, reach: 630, q: { max: 800, aim: true }, w: { max: 160 }, e: { max: 160, escape: true }, r: { max: 590, ground: true } },
+  spear: { pref: 120, reach: 150, q: { max: 330, aim: true }, w: { max: 150 }, e: { min: 100, max: 500, ground: true }, r: { min: 140, max: 860, aim: true } },
 };
 
 const PROJ_SPEED = { longbow: 1200, firestaff: 820, froststaff: 880 };
+// 스킬 투사체 속도 (조준 예측용)
+const SKILL_SPEED = { daggers: 1400, longbow: 1750, firestaff: 1100, froststaff: 1150, spear: 1350 };
 
 export function makeBotBrain(rng, skill) {
   return {
@@ -116,7 +118,7 @@ function power(u) {
 }
 
 function better(p, item) {
-  if (item.kind === 'skill') return item.rarity > p.grade[item.type];
+  if (item.kind === 'skill') return runeResult(p.grade[item.type], item.rarity) >= 0;
   return item.rarity > p.gear[item.kind].rarity;
 }
 
@@ -500,6 +502,10 @@ function combat(game, p, b, t, out, dt) {
       p.input.cy = py;
     }
     if (c.escape) return false;
+    if (c.aim && SKILL_SPEED[w] && key !== 'basic') {
+      const ld = (d / SKILL_SPEED[w]) * b.skill;
+      out.aim = Math.atan2(t.y + b.tvy * ld - p.y, t.x + b.tvx * ld - p.x) + (rng() - 0.5) * b.aimErr * 0.6;
+    }
     if (key === 'r' && !t.isPlayer && t.type !== 'guardian' && t.type !== 'elite') return false;
     press(p, key);
     b.actCd = 0.25;

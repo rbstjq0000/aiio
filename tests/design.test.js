@@ -9,7 +9,14 @@ const results = [];
 
 // 1) 같은 레벨·장비에서 1,000 체력을 몇 초에 깎는가 (모든 공격이 맞는다고 가정)
 const PREF = { greatsword: 70, daggers: 55, longbow: 420, firestaff: 380, froststaff: 360, spear: 120 };
-function killTime(weapon) {
+// 교전에 쓰는 스킬만 (순수 이동기 제외)
+function offensive(sk) {
+  if (sk.type === 'backflip') return false;
+  if (sk.type === 'blinkskill') return !!(sk.land || sk.bolt);
+  if (sk.type === 'dashstrike') return sk.dmg > 0;
+  return true;
+}
+function killTime(weapon, grade = 0) {
   const g = new Game({ seed: 7, fillTo: 2 });
   const a = g.addPlayer({ name: 'A', weapon });
   const d = g.addPlayer({ name: 'D', weapon: 'greatsword' });
@@ -23,6 +30,7 @@ function killTime(weapon) {
   d.y = 0;
   a.invulnT = d.invulnT = 0;
   a.ult = 0;
+  a.grade = { q: grade, w: grade, e: grade };
   const t0 = g.time;
   while (d.alive && g.time - t0 < 30) {
     const inp = a.input;
@@ -34,7 +42,7 @@ function killTime(weapon) {
     const dist = Math.hypot(d.x - a.x, d.y - a.y);
     inp.mx = dist > PREF[weapon] + 10 ? (d.x - a.x) / dist : 0;
     inp.my = dist > PREF[weapon] + 10 ? (d.y - a.y) / dist : 0;
-    for (const k of ['q', 'w', 'e']) if (a.cd[k] <= 0 && !a.act && WEAPONS[weapon][k].dmg !== 0 && WEAPONS[weapon][k].type !== 'blinkskill' && WEAPONS[weapon][k].type !== 'backflip') inp.p[PRESS[k]]++;
+    for (const k of ['q', 'w', 'e']) if (a.cd[k] <= 0 && !a.act && offensive(WEAPONS[weapon][k])) inp.p[PRESS[k]]++;
     d.input.mx = 0;
     d.input.my = 0;
     g.step(DT);
@@ -48,6 +56,12 @@ for (const w of WEAPON_IDS) ttk[w] = killTime(w);
 results.push(['무기별 1,000 체력 처치 시간 (목표 ~5초)', Object.entries(ttk).map(([w, t]) => `${WEAPONS[w].name} ${t.toFixed(1)}s`).join(', ')]);
 console.log(`- ${results[0][0]}: ${results[0][1]}`);
 // 근접 5초 ±0.5, 원거리·CC 무기는 사거리 이점 대신 5~6.2초
+// 전설 등급(고유 강화 포함)도 너무 튀지 않는지: 기본 대비 68~100% (CC형 강화는 처치 시간이 그대로일 수 있음)
+for (const w of WEAPON_IDS) {
+  const t4 = killTime(w, 4);
+  console.log(`  전설 ${WEAPONS[w].name} ${t4.toFixed(1)}s (${Math.round((t4 / ttk[w]) * 100)}%)`);
+  if (!process.env.SOFT) assert.ok(t4 / ttk[w] > 0.68 && t4 / ttk[w] <= 1, `${w} 전설 등급 처치 시간 비율 ${(t4 / ttk[w]).toFixed(2)}`);
+}
 const RANGED = new Set(['longbow', 'firestaff', 'froststaff']);
 for (const [w, t] of Object.entries(ttk)) {
   const [lo, hi] = RANGED.has(w) ? [5, 6.2] : [4.5, 5.5];

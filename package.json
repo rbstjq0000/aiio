@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
-    "test": "node tests/design.test.js && node tests/server.test.js",
+    "test": "node tests/design.test.js && node tests/skills.test.js && node tests/server.test.js",
     "build:demo": "node tools/build-standalone.js",
     "gen:doc": "node tools/gen-weapon-doc.js"
   },

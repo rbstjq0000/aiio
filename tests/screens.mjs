@@ -31,12 +31,12 @@ await page.screenshot({ path: `${out}/3-lobby.png` });
 await page.waitForTimeout(3500);
 
 // 우클릭 이동 + 좌클릭 공격 + 스킬
-await page.mouse.click(1000, 450, { button: 'right' });
+await page.mouse.click(1000, 450);
 await page.waitForTimeout(900);
 await page.mouse.move(900, 400);
-await page.mouse.down();
+await page.mouse.down({ button: 'right' });
 await page.waitForTimeout(500);
-await page.mouse.up();
+await page.mouse.up({ button: 'right' });
 await page.keyboard.press('KeyQ');
 await page.waitForTimeout(120);
 await page.screenshot({ path: `${out}/4-combat.png` });

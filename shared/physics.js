@@ -6,9 +6,15 @@ import { segSegDist2 } from './math.js';
 // 벽: [x1, y1, x2, y2, 두께] 선분(캡슐). obstacles 배열의 .walls 속성으로 함께 전달
 export function wallBlocked(x1, y1, x2, y2, walls, pad = 0) {
   if (!walls) return false;
+  const minX = Math.min(x1, x2);
+  const maxX = Math.max(x1, x2);
+  const minY = Math.min(y1, y2);
+  const maxY = Math.max(y1, y2);
   for (let i = 0; i < walls.length; i++) {
     const w = walls[i];
     const rr = w[4] / 2 + pad;
+    // 빠른 제외: 두 선분의 경계 상자가 안 겹치면 건너뜀
+    if (Math.max(w[0], w[2]) + rr < minX || Math.min(w[0], w[2]) - rr > maxX || Math.max(w[1], w[3]) + rr < minY || Math.min(w[1], w[3]) - rr > maxY) continue;
     if (segSegDist2(x1, y1, x2, y2, w[0], w[1], w[2], w[3]) < rr * rr) return true;
   }
   return false;

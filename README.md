@@ -19,7 +19,7 @@ npm start            # http://localhost:8080 (멀티플레이 서버 + 게임 �
 |---|---|
 | `npm start` | 서버 실행. `PORT` 환경변수로 포트 변경 |
 | `npm run dev` | 파일이 바뀌면 서버 자동 재시작 |
-| `npm test` | 설계 목표 검증 + 서버 연결 테스트 |
+| `npm test` | 설계 목표(교전 시간·성장 격차) + 직업 스킬 동작 + 서버 연결 테스트 |
 | `npm run build:demo` | 서버 없이 열리는 단일 HTML 데모 → `dist/styx-demo.html` |
 | `npm run gen:doc` | 무기 수치표를 코드에서 다시 생성해 설계서에 반영 |
 
@@ -33,14 +33,14 @@ shared/    게임 규칙. 서버와 브라우저(연습 모드)가 같은 코드
   combat.js     스킬 실행, 피해, CC, 투사체, 장판
   items.js      무기 스킬·등급·갑옷·신발·보조 주문·오브 데이터 (밸런스 수정은 여기서)
   maps.js       맵 데이터 (벽, 정글 캠프, 상자, 제단). 새 맵은 MAPS에 추가
-  nav.js        봇 길찾기
+  nav.js        길찾기 (봇 + 클릭 이동이 벽을 돌아가게)
   monsters.js   몬스터 데이터와 AI
   bot.js        봇 AI
   constants.js  매치 시간, 체력, 경험치 곡선 등
   cosmetics.js  치장품 카탈로그와 가격
 server/    WebSocket 서버: 공개 매칭, 비공개 방, 30틱 게임 루프
 client/    메뉴, 상점, 렌더러, 이펙트, 사운드, HUD, 이동 예측
-tests/     design.test.js(설계 검증), server.test.js, screens.mjs(브라우저 스크린샷)
+tests/     design.test.js(설계 검증), skills.test.js(스킬 동작), server.test.js, screens.mjs(브라우저 스크린샷)
 tools/     데모 빌드, 설계서 표 생성
 ```
 

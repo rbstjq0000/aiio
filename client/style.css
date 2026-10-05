@@ -225,6 +225,12 @@ kbd { display: inline-block; min-width: 26px; padding: 2px 7px; border-radius: 6
 .slot-tip { display: none; position: absolute; bottom: 76px; left: 50%; transform: translateX(-50%); width: 230px; background: rgba(14, 10, 24, 0.97); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; font-size: 12px; line-height: 1.5; z-index: 3; }
 .slot-tip b { display: block; color: var(--slot-color); }
 .slot:hover .slot-tip { display: block; }
+.slot-tip { width: 270px; }
+.slot-tip em { display: block; font-style: normal; color: #fff; margin: 2px 0 4px; }
+.slot-tip span { color: #b9b3cc; }
+.tip-up { display: block; font-style: normal; margin-top: 4px; padding-left: 8px; border-left: 2px solid var(--rc, #888); color: #8b85a0; }
+.tip-up.got { color: var(--rc); }
+.tip-up.got::after { content: ' ✓'; }
 #ping { position: absolute; bottom: 8px; right: 12px; font-size: 11px; color: var(--muted); }
 #ping.bad { color: var(--blood); }
 #deathscreen { position: absolute; top: 120px; left: 50%; transform: translateX(-50%); text-align: center; background: rgba(10, 4, 10, 0.7); border: 1px solid #ff335555; border-radius: 16px; padding: 18px 30px; }

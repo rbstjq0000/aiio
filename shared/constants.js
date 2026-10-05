@@ -11,6 +11,8 @@ export const VIEW_W = 1400;
 export const VIEW_H = 790;
 export const AOI_HALF_W = 1100;
 export const AOI_HALF_H = 760;
+// 시야: 이 거리 안에서 벽에 가리지 않은 것만 보임 (서버가 안 보이는 적 정보는 보내지 않음)
+export const VISION_R = 1000;
 
 // 매치
 export const MAX_PLAYERS = 16;
@@ -36,8 +38,12 @@ export const RESPAWN_PER_LEVEL = 1;
 export const RESPAWN_MAX = 30;
 export const RESPAWN_PROTECT = 2;
 export const SPAWN_PROTECT = 3;
-export const REGEN_DELAY = 6;
-export const REGEN_RATE = 0.02;
+// 체력 회복: 항상 초당 0.8% + 4초간 피해를 안 받으면 초당 4% 추가 (풀피까지 약 20초)
+export const REGEN_BASE = 0.008;
+export const REGEN_DELAY = 4;
+export const REGEN_RATE = 0.04;
+// 오브를 주운 직후 무적 (주우러 들어간 사람이 바로 터지지 않게)
+export const ORB_PROTECT = 2;
 export const KILL_HEAL = 0.25;
 // 오브 보유 효과: 페널티는 위치 공개(시야 공유)뿐, 대신 확실한 이득
 export const ORB_HP_PER = 0.08; // 오브 1개당 최대 체력 +8%

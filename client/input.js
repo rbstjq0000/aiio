@@ -1,4 +1,4 @@
-// 롤식 입력: 우클릭 이동(누르고 있으면 계속 따라감), 좌클릭 기본 공격, QWER 스킬, DF 주문
+// 입력: 좌클릭 이동(누르고 있으면 계속 따라감), 우클릭 기본 공격, QWER 스킬, DF 주문
 // 누름은 카운터로 보내서 틱 사이에 누른 것도 놓치지 않음
 import { PRESS, PRESS_N } from '../shared/constants.js';
 
@@ -9,11 +9,11 @@ export class Input {
     this.canvas = canvas;
     this.mouseX = innerWidth / 2;
     this.mouseY = innerHeight / 2;
-    this.lmb = false;
-    this.rmb = false;
+    this.atkHeld = false;
+    this.moveHeld = false;
     this.counters = new Array(PRESS_N).fill(0);
     this.onPress = null; // (key) => void
-    this.onRightClick = null; // (screenX, screenY) => void
+    this.onMoveClick = null; // (screenX, screenY) => void
     this.onKey = null;
     this.enabled = false;
     this.stopPressed = false;
@@ -29,8 +29,8 @@ export class Input {
       if (e.code === 'KeyS') this.stopPressed = true; // 롤처럼 S = 제자리 멈춤
     });
     addEventListener('blur', () => {
-      this.lmb = false;
-      this.rmb = false;
+      this.atkHeld = false;
+      this.moveHeld = false;
     });
     canvas.addEventListener('mousemove', (e) => {
       this.mouseX = e.clientX;
@@ -41,16 +41,16 @@ export class Input {
       this.mouseX = e.clientX;
       this.mouseY = e.clientY;
       if (e.button === 0) {
-        this.lmb = true;
-        this.press('atk');
+        this.moveHeld = true;
+        if (this.onMoveClick) this.onMoveClick(e.clientX, e.clientY);
       } else if (e.button === 2) {
-        this.rmb = true;
-        if (this.onRightClick) this.onRightClick(e.clientX, e.clientY);
+        this.atkHeld = true;
+        this.press('atk');
       }
     });
     addEventListener('mouseup', (e) => {
-      if (e.button === 0) this.lmb = false;
-      if (e.button === 2) this.rmb = false;
+      if (e.button === 0) this.moveHeld = false;
+      if (e.button === 2) this.atkHeld = false;
     });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   }
@@ -61,8 +61,8 @@ export class Input {
   }
 
   reset() {
-    this.lmb = false;
-    this.rmb = false;
+    this.atkHeld = false;
+    this.moveHeld = false;
     this.stopPressed = false;
   }
 }

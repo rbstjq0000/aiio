@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import { WEAPONS, ARMORS, BOOTS, SPELLS, GRADE_CD, RARITIES } from '../shared/items.js';
 
 const KEYS = [
-  ['basic', '좌클릭'],
+  ['basic', '우클릭'],
   ['q', 'Q'],
   ['w', 'W'],
   ['e', 'E'],
@@ -26,15 +26,16 @@ md += '> 이 표는 `node tools/gen-weapon-doc.js`로 shared/items.js에서 자�
 md += '> 기준: 같은 레벨·장비에서 1,000 체력을 근접 무기 약 5초, 원거리·CC 무기 5.5~6초에 처치 (tests/design.test.js가 검증)\n\n';
 for (const w of Object.values(WEAPONS)) {
   md += `### ${w.icon} ${w.name} (${w.role}) — 기본 공격 DPS 약 ${dps(w)}\n`;
-  md += '| 키 | 스킬 | 효과 | 쿨타임 |\n|---|---|---|---|\n';
+  md += '| 키 | 스킬 | 한 줄 설명 | 수치 | 쿨타임 | 영웅 강화 | 전설 강화 |\n|---|---|---|---|---|---|---|\n';
   for (const [k, label] of KEYS) {
     const sk = w[k];
     const cd = k === 'basic' ? '—' : k === 'r' ? '궁극기 게이지' : `${sk.cd}초`;
-    md += `| ${label} | ${sk.name} | ${sk.desc} | ${cd} |\n`;
+    const up = (g) => (sk.up && sk.up[g] ? sk.up[g].upDesc : '—');
+    md += `| ${label} | ${sk.icon || ''} ${sk.name} | ${sk.hint || '—'} | ${sk.desc} | ${cd} | ${up(3)} | ${up(4)} |\n`;
   }
   md += '\n';
 }
-md += '### 스킬 등급 (스킬 각인)\n| 등급 | 피해 배율 | 쿨타임 배율 |\n|---|---|---|\n';
+md += '### 스킬 등급 (스킬 각인)\n더 높은 등급 각인은 그 등급으로, 같은 등급 각인은 합성해 한 단계 상승. 영웅·전설에서 고유 강화가 붙음.\n\n| 등급 | 피해 배율 | 쿨타임 배율 |\n|---|---|---|\n';
 RARITIES.forEach((r, i) => (md += `| ${r.name} | ×${r.mult} | ×${GRADE_CD[i]} |\n`));
 md += '\n### 갑옷 · 신발 (능력치, 등급 배율이 효과에 곱해짐)\n| 장비 | 효과 |\n|---|---|\n';
 for (const a of Object.values(ARMORS)) md += `| ${a.icon} ${a.name} | ${a.desc} |\n`;

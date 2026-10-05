@@ -2,13 +2,13 @@
 // 규칙 근거: docs/COMBAT_DESIGN.md
 import { TAU, clamp, dist2, lerp, makeRng, shuffle, segPointDist2 } from './math.js';
 import * as C from './constants.js';
-import { WEAPONS, ARMORS, BOOTS, SPELLS, DEFAULT_SPELLS, RARITIES, ultGrade, WEAPON_IDS, ARMOR_IDS, BOOT_IDS, SLOT_KINDS, KIND_IDS, makeItem, rollItem, rollRarity, ORBS } from './items.js';
+import { WEAPONS, ARMORS, BOOTS, SPELLS, DEFAULT_SPELLS, RARITIES, ultGrade, WEAPON_IDS, ARMOR_IDS, BOOT_IDS, SLOT_KINDS, KIND_IDS, makeItem, rollItem, rollRarity, ORBS, runeResult } from './items.js';
 import { MONSTERS, MSTATE, updateMonster } from './monsters.js';
 import { MAPS, DEFAULT_MAP, CAMP_TYPES } from './maps.js';
 import { NavGrid } from './nav.js';
 
 const NAV_CACHE = new Map();
-import { resolveStatic, separateUnits, stepBody } from './physics.js';
+import { resolveStatic, separateUnits, stepBody, wallBlocked } from './physics.js';
 import { randomCosmetics, sanitizeCosmetics } from './cosmetics.js';
 import { CombatMixin, PROJ_KINDS, AREA_KINDS } from './combat.js';
 import { BOT_NAMES, botThink, makeBotBrain } from './bot.js';
@@ -29,6 +29,8 @@ export const PF = {
   SLOW: 512,
   IFRAME: 1024,
   CHANNEL: 2048,
+  EMPOWER: 4096,
+  BURN: 8192,
 };
 export const ALTAR_STATE = ['idle', 'warn', 'guarded', 'dropped', 'taken'];
 export const KIND_INDEX = { skill: 0, armor: 1, boots: 2 };
@@ -44,6 +46,11 @@ function makeStatus() {
     invisT: 0,
     bulwarkT: 0,
     sprintT: 0,
+    hasteT: 0,
+    haste: 0,
+    empT: 0,
+    emp: null,
+    burnT: 0,
     shield: 0,
     shieldT: 0,
     slows: [],
@@ -313,6 +320,7 @@ export class Game {
       R: this.R,
       obstacles: this.obstacles.map((o) => [o.x, o.y, o.r, o.k]),
       walls: this.walls,
+      decor: this.map.decor || null,
       altars: this.altars.map((a) => [a.i, a.x, a.y]),
       camps: this.camps.map((c) => [c.id, c.x, c.y, c.type]),
       seed: this.seed,
@@ -436,8 +444,9 @@ export class Game {
         return;
       }
     }
-    if (!p.outside && p.hp < p.maxHp && this.time - p.lastDmgT > C.REGEN_DELAY) {
-      p.hp = Math.min(p.maxHp, p.hp + p.maxHp * C.REGEN_RATE * dt);
+    if (!p.outside && p.hp < p.maxHp) {
+      const rate = C.REGEN_BASE + (this.time - p.lastDmgT > C.REGEN_DELAY ? C.REGEN_RATE : 0);
+      p.hp = Math.min(p.maxHp, p.hp + p.maxHp * rate * dt);
     }
   }
 
@@ -446,6 +455,7 @@ export class Game {
     let s = C.BASE_SPEED * p.speedMult * this.slowMult(p);
     if (p.st.sprintT > 0) s *= 1.6;
     if (p.st.invisT > 0) s *= 1.25;
+    if (p.st.hasteT > 0) s *= 1 + p.st.haste;
     if (withAction) {
       if (p.act) s *= p.act.moveMult;
       if (p.channel) s = 0;
@@ -503,6 +513,8 @@ export class Game {
       return;
     }
     if (p.st.stunT > 0 || dist2(tgt.x, tgt.y, p.x, p.y) > C.INTERACT_RANGE ** 2) return;
+    // 상자는 걸음을 멈춘 뒤에 열기 시작 (도착하면서 아직 움직이는 중이면 기다림)
+    if (c && (Math.abs(p.input.mx) + Math.abs(p.input.my) > 0.2 || p.act)) return;
     p.wantAct = null;
     if (it) this.equip(p, it);
     else this.startChannel(p, c);
@@ -546,17 +558,18 @@ export class Game {
   equip(p, gi) {
     const kind = gi.item.kind;
     if (kind === 'skill') {
-      // 스킬 각인: 더 높은 등급일 때만 사용 (소모)
+      // 스킬 각인: 더 높은 등급이면 그 등급으로, 같은 등급이면 합성해 한 단계 상승 (소모)
       const slot = gi.item.type;
-      if (gi.item.rarity <= p.grade[slot]) {
+      const next = runeResult(p.grade[slot], gi.item.rarity);
+      if (next < 0) {
         this.emit({ e: 'equipfail', to: p.id });
         return;
       }
       const beforeR = ultGrade(p.grade);
-      p.grade[slot] = gi.item.rarity;
+      p.grade[slot] = next;
       this.items.splice(this.items.indexOf(gi), 1);
       p.uiVer++;
-      this.emit({ e: 'equip', id: p.id, x: Math.round(p.x), y: Math.round(p.y), r: gi.item.rarity, s: slot });
+      this.emit({ e: 'equip', id: p.id, x: Math.round(p.x), y: Math.round(p.y), r: next, s: slot });
       const afterR = ultGrade(p.grade);
       if (afterR > beforeR) this.emit({ e: 'setbonus', id: p.id, x: Math.round(p.x), y: Math.round(p.y), r: afterR });
       return;
@@ -660,7 +673,15 @@ export class Game {
         this.dropSouls(u.x, u.y, u.xp * (1 + this.time / 300), u.type === 'guardian' ? 8 : 4);
       }
       // 스킬 각인: 일반 몬스터도 낮은 확률로, 엘리트는 확정(높은 등급)
-      const runeChance = { shade: 0.05, archer: 0.06, brute: 0.2, elite: 1, guardian: 1 }[u.type] || 0;
+      const runeChance = { shade: 0.05, archer: 0.06, elite: 1, guardian: 1 }[u.type] || 0;
+      if (killer && u.camp) {
+        const c = this.camps.find((q) => q.id === u.camp);
+        if (c) {
+          c.lastKiller = killer.id;
+          c.lx = u.x;
+          c.ly = u.y;
+        }
+      }
       if (killer && this.rng() < runeChance) {
         const bonus = u.type === 'guardian' ? 0.5 : u.type === 'elite' ? 0.2 : 0;
         const slot = ['q', 'w', 'e'][Math.floor(this.rng() * 3)];
@@ -742,6 +763,8 @@ export class Game {
       const x = z.x + Math.cos(a) * d;
       const y = z.y + Math.sin(a) * d;
       if (x * x + y * y > (this.R - 60) ** 2 || this.blocked(x, y, 40)) continue;
+      // 몬스터 바로 옆에서 부활하지 않게
+      if (this.monsters.some((m) => m.alive && dist2(x, y, m.x, m.y) < 480 * 480)) continue;
       let minD = Infinity;
       for (const p of this.players.values()) if (p.alive) minD = Math.min(minD, dist2(x, y, p.x, p.y));
       if (minD > bestScore) {
@@ -775,6 +798,7 @@ export class Game {
         o.taken = true;
         p.orbs.push(o.i);
         p.orbTakes++;
+        p.invulnT = Math.max(p.invulnT, C.ORB_PROTECT);
         this.recomputeStats(p);
         const al = this.altars[o.i];
         al.state = 'taken';
@@ -856,6 +880,13 @@ export class Game {
           c.alive = false;
           c.respawnT = CAMP_TYPES[c.type].respawn;
           this.emit({ e: 'campclear', id: c.id, x: c.x, y: c.y });
+          // 캠프 보상: 정리한 사람이 있으면 스킬 각인 (큰 캠프일수록 확률 높음)
+          const chance = { small: 0.5, ranged: 0.7, large: 1 }[c.type] || 0;
+          if (c.lastKiller && this.rng() < chance) {
+            const slot = ['q', 'w', 'e'][Math.floor(this.rng() * 3)];
+            this.dropItem(makeItem('skill', slot, Math.max(1, rollRarity(this.rng, this.time, c.type === 'large' ? 0.1 : 0))), c.lx, c.ly);
+          }
+          c.lastKiller = 0;
         }
         continue;
       }
@@ -907,6 +938,7 @@ export class Game {
       ringT: 2.5,
       leash: extra.camp ? 420 : def.leash || 900,
       altar: extra.altar ?? null,
+      camp: extra.camp || 0,
       tele: null,
       invulnT: 0,
       lastDmgT: -99,
@@ -986,6 +1018,8 @@ export class Game {
     if (p.st.slows.length) f |= PF.SLOW;
     if (p.st.iframeT > 0) f |= PF.IFRAME;
     if (p.channel) f |= PF.CHANNEL;
+    if (p.st.empT > 0) f |= PF.EMPOWER;
+    if (p.st.burnT > 0) f |= PF.BURN;
     return f;
   }
 
@@ -1006,7 +1040,11 @@ export class Game {
     }
     const HW = C.AOI_HALF_W;
     const HH = C.AOI_HALF_H;
-    const inView = (x, y, pad) => Math.abs(x - cx) < HW + pad && Math.abs(y - cy) < HH + pad;
+    const inBox = (x, y, pad) => Math.abs(x - cx) < HW + pad && Math.abs(y - cy) < HH + pad;
+    // 시야: 거리 안 + 벽에 가리지 않음
+    const VR2 = C.VISION_R * C.VISION_R;
+    const walls = this.walls;
+    const inView = (x, y, pad) => inBox(x, y, pad) && (x - cx) ** 2 + (y - cy) ** 2 < VR2 && !wallBlocked(cx, cy, x, y, walls, -8);
     const R = Math.round;
     const WI = (t) => WEAPON_IDS.indexOf(t);
 
@@ -1056,14 +1094,14 @@ export class Game {
     }
     const pr = [];
     for (const q of this.projs) {
-      if (!q.alive || !inView(q.x, q.y, 150)) continue;
+      if (!q.alive || (q.owner !== pid && !inView(q.x, q.y, 150))) continue;
       pr.push([q.id, PROJ_KINDS.indexOf(q.pkind), R(q.x), R(q.y), R(q.vx), R(q.vy), q.color ? WI(q.color) : -1, q.owner]);
     }
     const ar = [];
     for (const a of this.areas) {
       const rr = a.kind === 'line' ? a.len : a.r;
-      if (!a.alive || !inView(a.x, a.y, rr + 50)) continue;
-      ar.push([a.id, AREA_KINDS.indexOf(a.kind), R(a.x), R(a.y), R(a.r), R(a.t * 100), R(a.delay * 100), R(a.dur * 100), a.color ? WI(a.color) : -1, a.owner, R(a.ang * 100) / 100, R(a.len), R(a.width), a.team === -1 ? 1 : 0]);
+      if (!a.alive || (a.owner !== pid && !inView(a.x, a.y, rr + 50))) continue;
+      ar.push([a.id, AREA_KINDS.indexOf(a.kind), R(a.x), R(a.y), R(a.r), R(a.t * 100), R(a.delay * 100), R(a.dur * 100), a.color ? WI(a.color) : -1, a.owner, R(a.ang * 100) / 100, R(a.len), R(a.width), a.team === -1 ? 1 : 0, a.outer ? R(a.outer.r0) : 0]);
     }
     const so = [];
     for (const o of this.souls) {
@@ -1077,7 +1115,7 @@ export class Game {
     }
     const ch = [];
     for (const c of this.chests) {
-      if (!inView(c.x, c.y, 40)) continue;
+      if (!inBox(c.x, c.y, 40)) continue;
       ch.push([c.id, c.x, c.y, c.open ? 1 : 0]);
     }
     // 전체 공개 정보: 제단, 떨어진 오브, 오브 보유자

@@ -1,6 +1,9 @@
 // 게임 화면: 스냅샷 수신, 이동 예측/보정, 보간, 이벤트 → 이펙트/사운드
 import * as C from '../shared/constants.js';
 import { stepBody, startDash, resolveStatic } from '../shared/physics.js';
+import { NavGrid } from '../shared/nav.js';
+
+const NAV_CACHE = new Map();
 import { WEAPONS, ARMORS, BOOTS, SPELLS, RARITIES, ORBS, WEAPON_IDS, ARMOR_IDS, BOOT_IDS, KIND_IDS, SLOT_KINDS, itemDef } from '../shared/items.js';
 import { MONSTER_TYPES } from '../shared/monsters.js';
 import { PROJ_KINDS, AREA_KINDS, ALTAR_STATE, PF } from '../shared/sim.js';
@@ -109,13 +112,19 @@ export class GameClient {
       R: m.map.R,
       obstacles,
       walls: m.map.walls,
+      decor: m.map.decor,
       altars: m.map.altars.map((a) => ({ i: a[0], x: a[1], y: a[2] })),
       camps: (m.map.camps || []).map((c) => ({ id: c[0], x: c[1], y: c[2], type: c[3] })),
       matchTime: m.map.matchTime,
     };
     this.moveTarget = null;
+    this.path = null;
+    this.dest = null;
     this.moveMarker = null;
     this.hitstop = 0;
+    // 클릭 이동용 길찾기 격자 (맵마다 한 번)
+    if (!NAV_CACHE.has(this.map.id)) NAV_CACHE.set(this.map.id, new NavGrid(this.map.R, obstacles, this.map.walls));
+    this.nav = NAV_CACHE.get(this.map.id);
     this.frozenView = null;
     this.roster.clear();
     for (const r of m.roster) this.roster.set(r[0], { name: r[1], cos: r[2], bot: r[3] });
@@ -129,7 +138,7 @@ export class GameClient {
     this.input.counters = new Array(C.PRESS_N).fill(0);
     this.lastSpell = [0, 0];
     this.interactTarget = 0;
-    this.input.onRightClick = (sx, sy) => this.rightClick(sx, sy);
+    this.input.onMoveClick = (sx, sy) => this.moveClick(sx, sy);
     this.running = true;
     this.lastFrame = performance.now();
     this.acc = 0;
@@ -223,8 +232,8 @@ export class GameClient {
     return [r.cam.x + (sx - r.w / 2) / r.zoom, r.cam.y + (sy - r.h / 2) / r.zoom];
   }
 
-  // 우클릭: 상자/장비 위면 가서 열기·줍기, 아니면 그 지점으로 이동
-  rightClick(sx, sy) {
+  // 좌클릭: 상자/장비 위면 가서 열기·줍기, 아니면 그 지점으로 이동
+  moveClick(sx, sy) {
     const [wx, wy] = this.mouseWorld(sx, sy);
     const s = this.latest;
     let target = null;
@@ -247,15 +256,28 @@ export class GameClient {
       }
     }
     if (target) {
-      this.moveTarget = [target.x, target.y];
+      this.setDest(target.x, target.y);
       this.interactTarget = target.id;
       this.input.counters[C.PRESS.act]++;
       this.moveMarker = { x: target.x, y: target.y, t: 0, interact: true };
     } else {
-      this.moveTarget = [wx, wy];
+      this.setDest(wx, wy);
       this.interactTarget = 0;
       this.moveMarker = { x: wx, y: wy, t: 0 };
     }
+  }
+
+  // 이동 목적지: 벽이 가로막으면 길찾기로 돌아가는 경로를 만듦 (롤처럼)
+  setDest(x, y) {
+    const px = this.pred ? this.pred.x : this.me ? this.me.x : 0;
+    const py = this.pred ? this.pred.y : this.me ? this.me.y : 0;
+    this.dest = [x, y];
+    this.path = null;
+    if (this.nav && !this.nav.clearLine(px, py, x, y)) {
+      const p = this.nav.find(px, py, x, y);
+      if (p && p.length) this.path = p;
+    }
+    this.moveTarget = this.path ? this.path[0] : [x, y];
   }
 
   // 30Hz 고정: 입력 전송 + 내 이동 예측
@@ -264,10 +286,27 @@ export class GameClient {
     const me = this.me;
     const px = this.pred ? this.pred.x : me ? me.x : 0;
     const py = this.pred ? this.pred.y : me ? me.y : 0;
-    // 우클릭을 누르고 있으면 계속 커서를 따라감 (롤과 동일)
-    if (this.input.rmb) this.moveTarget = [wx, wy];
+    // 좌클릭을 누르고 있으면 계속 커서를 따라감 (경로는 0.2초마다 다시 계산)
+    if (this.input.moveHeld) {
+      const moved = !this.dest || Math.hypot(this.dest[0] - wx, this.dest[1] - wy) > 30;
+      if (moved && (this.repathT || 0) <= 0) {
+        this.setDest(wx, wy);
+        this.repathT = 0.2;
+      }
+    }
+    if (this.repathT > 0) this.repathT -= C.DT;
+    // 경로 중간 지점에 닿았거나 다음 지점이 바로 보이면 다음으로
+    if (this.path && this.path.length > 1) {
+      const [ax, ay] = this.path[0];
+      const [bx, by] = this.path[1];
+      if (Math.hypot(ax - px, ay - py) < 22 || (this.nav && this.nav.clearLine(px, py, bx, by))) {
+        this.path.shift();
+        this.moveTarget = this.path[0];
+      }
+    }
     if (this.input.stopPressed) {
       this.moveTarget = null;
+      this.path = null;
       this.input.stopPressed = false;
     }
     let mx = 0;
@@ -286,19 +325,23 @@ export class GameClient {
           mx *= d / step;
           my *= d / step;
         }
+      } else if (this.path && this.path.length > 1) {
+        this.path.shift();
+        this.moveTarget = this.path[0];
       } else {
         this.moveTarget = null;
+        this.path = null;
       }
     }
     const aim = Math.atan2(wy - py, wx - px);
     this.aim = aim;
     this.seq++;
     const p = this.input.counters.slice();
-    this.t.send({ t: 'in', s: this.seq, mx: Math.round(mx * 1000) / 1000, my: Math.round(my * 1000) / 1000, a: Math.round(aim * 1000) / 1000, k: this.input.lmb, cx: Math.round(wx), cy: Math.round(wy), ti: this.interactTarget, p });
+    this.t.send({ t: 'in', s: this.seq, mx: Math.round(mx * 1000) / 1000, my: Math.round(my * 1000) / 1000, a: Math.round(aim * 1000) / 1000, k: this.input.atkHeld, cx: Math.round(wx), cy: Math.round(wy), ti: this.interactTarget, p });
     if (!me || !me.al || !this.pred || !this.ui) return;
     let speed = me.ms;
     const w = WEAPONS[this.ui.gear.weapon.type];
-    if (this.input.lmb) speed *= w.basic.moveMult;
+    if (this.input.atkHeld) speed *= w.basic.moveMult;
     if (me.chn >= 0) speed = 0;
     // 점멸만 즉시 예측 (나머지 이동기는 서버 결과로 보정)
     let sp = null;
@@ -314,6 +357,7 @@ export class GameClient {
           sp = { dx: dx / len, dy: dy / len, dist: Math.min(spell.dist, len) };
           this.applyBlink(this.pred, sp);
           this.moveTarget = null;
+          this.path = null;
         }
       }
     }
@@ -432,6 +476,7 @@ export class GameClient {
       ang: a[10],
       len: a[11],
       width: a[12],
+      outer: a[14] || 0,
       ticks: AREA_KINDS[a[1]] === 'ground' ? 2 : 1,
     }));
     const souls = latest.so.map((o) => ({ id: o[0], x: o[1], y: o[2], v: o[3] }));
@@ -489,6 +534,7 @@ export class GameClient {
       walls: this.map.walls,
       camps: this.map.camps,
       moveMarker: this.moveMarker,
+      eye: meP ? { x: meP.x, y: meP.y } : { x: cx, y: cy },
       serverTime: latest.tm,
       scores: latest.sc,
     };
@@ -584,10 +630,21 @@ export class GameClient {
           R.beam(e.x, e.y, e.x + Math.cos(e.a) * e.l, e.y + Math.sin(e.a) * e.l, col, 34, 0.45);
           R.shake(10 * v);
           play('boom', v);
+        } else if (e.k === 'ring' && e.w !== 'froststaff') {
+          // 회오리 도끼: 바깥 고리가 핵심이라 고리 두 겹으로
+          R.ring(e.x, e.y, e.r * 0.55, e.r, col, 0.35, 16);
+          R.ring(e.x, e.y, 20, e.r * 0.62, '#ffffff', 0.25, 4);
+          R.burst(e.x, e.y, col, 22, 420, 5, 0.45);
+          play('heavy', v);
+          R.shake(6 * v);
         } else if (e.k === 'ring') {
           R.ring(e.x, e.y, 30, e.r, '#c8f4ff', 0.4, 14);
           R.burst(e.x, e.y, '#e6fbff', 22, 380, 4, 0.5, { shape: 'star' });
           play('ice', v);
+        } else if (e.k === 'flag') {
+          R.ring(e.x, e.y, 10, e.r, col, 0.35, 8);
+          R.burst(e.x, e.y, col, 14, 260, 4, 0.4);
+          play('heavy', v * 0.7);
         } else if (e.k === 'slam') {
           R.ring(e.x, e.y, 20, e.r, '#ff6b5a', 0.35, 10);
           R.burst(e.x, e.y, '#ff8a5a', 14, 300, 5, 0.4);
@@ -609,6 +666,25 @@ export class GameClient {
         play('dash', this.vol(e.x, e.y) * (isMe ? 1 : 0.5));
         break;
       }
+      case 'empower':
+        R.ring(e.x, e.y, 10, 60, '#ff6b3d', 0.3, 6);
+        R.burst(e.x, e.y, '#ffb070', 12, 220, 4, 0.4);
+        play('shield', this.vol(e.x, e.y) * 0.8);
+        break;
+      case 'empowerhit':
+        R.slash(e.x, e.y, e.a, 2.6, 130, '#ff6b3d', '#ffe0b0', 2);
+        R.shake(isMe ? 9 : 4);
+        play('hitBig', this.vol(e.x, e.y));
+        break;
+      case 'execute':
+        R.text(e.x, e.y - 56, '처형!', '#ff3d6b', 22, 1.1);
+        R.burst(e.x, e.y, '#ff3d6b', 30, 420, 6, 0.6);
+        R.shake(12 * this.vol(e.x, e.y));
+        break;
+      case 'flagdash':
+        R.ring(e.x, e.y, 20, 140, '#ffe066', 0.35, 10);
+        play('dash', this.vol(e.x, e.y));
+        break;
       case 'blink':
         R.burst(e.x, e.y, '#b28cff', 16, 240, 4, 0.4);
         R.burst(e.x2, e.y2, '#e0c8ff', 16, 240, 4, 0.4);

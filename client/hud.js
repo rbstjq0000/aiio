@@ -1,11 +1,11 @@
 // HUD: 체력/경험치, 스킬 쿨타임, 장비, 미니맵, 킬피드, 오브 현황, 알림
 import * as C from '../shared/constants.js';
-import { WEAPONS, ARMORS, BOOTS, SPELLS, RARITIES, ORBS, itemDef, itemName, KIND_NAMES } from '../shared/items.js';
+import { WEAPONS, ARMORS, BOOTS, SPELLS, RARITIES, ORBS, itemDef, itemName, KIND_NAMES, skillAt, GRADE_CD, runeResult } from '../shared/items.js';
 
 const $ = (id) => document.getElementById(id);
 
 const SLOTS = [
-  { k: 'basic', key: '좌클릭' },
+  { k: 'basic', key: '우클릭' },
   { k: 'q', key: 'Q' },
   { k: 'w', key: 'W' },
   { k: 'e', key: 'E' },
@@ -62,18 +62,27 @@ export class Hud {
   refreshGear(ui) {
     const w = WEAPONS[ui.gear.weapon.type];
     const g = ui.grade || { q: 0, w: 0, e: 0, r: 0 };
-    const set = (k, icon, name, desc, color, grade = -1) => {
+    const set = (k, icon, name, desc, color, grade = -1, extra = '') => {
       const el = this.slotEls[k];
       el.querySelector('.slot-icon').textContent = icon;
       el.querySelector('.slot-tip b').textContent = grade >= 0 ? `${name} · ${RARITIES[grade].name}` : name;
-      el.querySelector('.slot-tip span').textContent = desc;
+      el.querySelector('.slot-tip span').innerHTML = `${desc}${extra}`;
       el.style.setProperty('--slot-color', color);
       el.style.setProperty('--grade', grade >= 0 ? RARITIES[grade].color : 'transparent');
       el.classList.toggle('graded', grade > 0);
     };
     set('basic', w.icon, w.basic.name, w.basic.desc, w.color);
-    for (const k of ['q', 'w', 'e']) set(k, k.toUpperCase(), w[k].name, `${w[k].desc} · ${w[k].cd}초`, w.color, g[k]);
-    set('r', '★', w.r.name, `${w.r.desc}${g.r ? '' : ' · Q·W·E가 모두 희귀 이상이면 등급 상승(세트 효과)'}`, '#ffd45a', g.r);
+    for (const k of ['q', 'w', 'e']) {
+      const sk = skillAt(w, k, g[k]);
+      // 쉬운 설명 → 수치 → 영웅/전설 고유 강화 (얻은 것은 밝게)
+      let up = '';
+      for (const lv of [3, 4]) {
+        const u = w[k].up && w[k].up[lv];
+        if (u) up += `<i class="tip-up${g[k] >= lv ? ' got' : ''}" style="--rc:${RARITIES[lv].color}">${RARITIES[lv].name}: ${u.upDesc}</i>`;
+      }
+      set(k, w[k].icon || k.toUpperCase(), w[k].name, `<em>${w[k].hint || ''}</em>${sk.desc} · ${Math.round(sk.cd * GRADE_CD[g[k]] * 10) / 10}초`, w.color, g[k], up);
+    }
+    set('r', w.r.icon || '★', w.r.name, `<em>${w.r.hint || ''}</em>${w.r.desc}${g.r ? '' : '<i class="tip-up">Q·W·E가 모두 희귀 이상이면 R도 등급 상승(세트 효과)</i>'}`, '#ffd45a', g.r);
     ui.spells.forEach((id, i) => {
       const sp = SPELLS[id];
       set(i ? 'f' : 'd', sp.icon, sp.name, `${sp.desc} · ${sp.cd}초`, '#9fe8ff');
@@ -202,12 +211,13 @@ export class Hud {
       if (best.kind === 'skill') {
         const cg = game.ui.grade[best.type];
         const w = WEAPONS[game.ui.gear.weapon.type][best.type];
-        const ok = best.rarity > cg;
-        html = `<kbd>우클릭</kbd> <b style="color:${rc.color}">${rc.name} ${best.type.toUpperCase()} 각인</b> ${ok ? '<em class="up">▲</em>' : '<em class="down">사용 불가</em>'}<small>${w.name}: ${RARITIES[cg].name} → ${rc.name}</small>`;
+        const ng = runeResult(cg, best.rarity);
+        const up = ng >= 3 && w.up && w.up[ng] ? ` · ${w.up[ng].upDesc}` : '';
+        html = `<kbd>클릭</kbd> <b style="color:${rc.color}">${rc.name} ${best.type.toUpperCase()} 각인</b> ${ng >= 0 ? `<em class="up">▲${ng === cg + 1 && best.rarity === cg ? ' 합성' : ''}</em>` : '<em class="down">사용 불가 (더 낮은 등급)</em>'}<small>${w.name}: ${RARITIES[cg].name} → ${ng >= 0 ? `<b style="color:${RARITIES[ng].color}">${RARITIES[ng].name}</b>${up}` : '-'}</small>`;
       } else {
         const cur = game.ui.gear[best.kind];
         const better = best.rarity > cur.rarity ? '<em class="up">▲</em>' : best.rarity < cur.rarity ? '<em class="down">▼</em>' : '';
-        html = `<kbd>우클릭</kbd> 장착: <b style="color:${rc.color}">${rc.name} ${best.name}</b> ${better}<small>현재: ${itemName(cur)}</small>`;
+        html = `<kbd>클릭</kbd> 장착: <b style="color:${rc.color}">${rc.name} ${best.name}</b> ${better}<small>현재: ${itemName(cur)}</small>`;
       }
     } else {
       for (const c of v.chests) {
@@ -215,7 +225,7 @@ export class Hud {
         const d = (c.x - me.x) ** 2 + (c.y - me.y) ** 2;
         if (d < bd) {
           bd = d;
-          html = '<kbd>우클릭</kbd> 상자 열기 <small>1초 동안 멈춰 있어야 함 · 맞으면 끊김</small>';
+          html = '<kbd>클릭</kbd> 상자 열기 <small>1초 동안 멈춰 있어야 함 · 맞으면 끊김</small>';
         }
       }
     }

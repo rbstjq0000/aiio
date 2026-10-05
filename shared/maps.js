@@ -35,13 +35,13 @@ function arcWall(out, r, a0, a1, step = 0.16) {
 }
 
 // 원형 벽에 문(gaps: [중심각, 폭(라디안)])을 뚫어서 추가
-function ringWithGates(out, r, gates) {
+function ringWithGates(out, r, gates, step = 0.16) {
   const g = gates.map(([c, w]) => [((c - w / 2) % TAU + TAU) % TAU, ((c + w / 2) % TAU + TAU) % TAU]).sort((a, b) => a[0] - b[0]);
   for (let i = 0; i < g.length; i++) {
     const start = g[i][1];
     let end = g[(i + 1) % g.length][0];
     if (end <= start) end += TAU;
-    arcWall(out, r, start, end);
+    arcWall(out, r, start, end, step);
   }
 }
 
@@ -63,110 +63,150 @@ function room(out, cx, cy, a, w, h, door = 130) {
   }
 }
 
+// 명계 폐허: 3겹 동심원 구조
+//   성소(중앙) ─ 문 4개 ─ 제단 지대(오브 3곳, 방사형 벽으로 3구역) ─ 문 6개 ─ 바깥 폐허(방 6개, 엄폐벽, 엘리트 은신처)
 function buildRuins() {
-  const R = 2300;
+  const R = 3000;
+  const SANCTUM = 720;
+  const MID = 1550;
   const rng = makeRng(20261005);
   const walls = [];
-  // 중앙 성소 (반지름 560, 문 4개)
-  ringWithGates(walls, 560, [0, 1, 2, 3].map((i) => [Math.PI / 4 + (i * Math.PI) / 2, 0.42]));
-  // 중간 고리 (반지름 1180, 문 6개)
-  ringWithGates(walls, 1180, [0, 1, 2, 3, 4, 5].map((i) => [Math.PI / 6 + (i * Math.PI) / 3, 0.2]));
-  // 중간 지대를 3구역으로 나누는 방사형 벽
-  for (let i = 0; i < 3; i++) {
-    const a = (i * TAU) / 3;
-    const [x1, y1] = polar(600, a);
-    const [x2, y2] = polar(1140, a);
+  const deg = (d) => (d * Math.PI) / 180;
+  ringWithGates(walls, SANCTUM, [45, 135, 225, 315].map((d) => [deg(d), 0.36]));
+  ringWithGates(walls, MID, [30, 90, 150, 210, 270, 330].map((d) => [deg(d), 0.17]), 0.14);
+  // 제단 지대를 3구역으로 나누는 방사형 벽
+  for (const d of [0, 120, 240]) {
+    const [x1, y1] = polar(SANCTUM + 40, deg(d));
+    const [x2, y2] = polar(MID - 40, deg(d));
     walls.push([Math.round(x1), Math.round(y1), Math.round(x2), Math.round(y2), WALL]);
   }
-  // 바깥 지대의 방 6개
+  // 바깥 폐허: 방 6개 (안쪽·바깥쪽 벽에 문)
   const rooms = [];
   for (let i = 0; i < 6; i++) {
-    const a = (i * TAU) / 6;
-    const [cx, cy] = polar(1760, a);
-    room(walls, cx, cy, a, 300, 380);
+    const a = deg(i * 60);
+    const [cx, cy] = polar(2300, a);
+    room(walls, cx, cy, a, 380, 480, 140);
     rooms.push({ x: cx, y: cy, a });
   }
-  // 바깥 지대 짧은 벽(엄폐물) 몇 개
+  // 방 사이 엄폐벽 두 줄
   for (let i = 0; i < 6; i++) {
-    const a = ((i + 0.5) * TAU) / 6;
-    for (const off of [-0.12, 0.12]) {
-      const [x1, y1] = polar(1420, a + off);
-      const [x2, y2] = polar(1600, a + off * 1.3);
+    const a = deg(30 + i * 60);
+    for (const off of [-0.1, 0.1]) {
+      const [x1, y1] = polar(1820, a + off);
+      const [x2, y2] = polar(2060, a + off);
       walls.push([Math.round(x1), Math.round(y1), Math.round(x2), Math.round(y2), WALL]);
     }
   }
+  // 엘리트 은신처: 바깥 가장자리 짧은 호 벽 (3곳)
+  const elites = [];
+  for (const d of [30, 150, 270]) {
+    arcWall(walls, 2680, deg(d) - 0.2, deg(d) + 0.2, 0.1);
+    const [x, y] = polar(2850, deg(d));
+    elites.push({ x: Math.round(x), y: Math.round(y) });
+  }
 
-  const altars = [0, 1, 2].map((i) => {
-    const [x, y] = polar(880, (i * TAU) / 3 + Math.PI / 3);
+  const altars = [60, 180, 300].map((d) => {
+    const [x, y] = polar(1150, deg(d));
     return { x: Math.round(x), y: Math.round(y) };
   });
 
   const camps = [];
   const chests = [];
-  // 방마다: 캠프 1 + 상자 1
   rooms.forEach((rm, i) => {
-    const [ix, iy] = polar(1760 - 60, rm.a);
+    const [ix, iy] = polar(2250, rm.a);
     camps.push({ x: Math.round(ix), y: Math.round(iy), type: i % 2 ? 'ranged' : 'large' });
-    const [cx, cy] = polar(1760 + 90, rm.a);
+    const [cx, cy] = polar(2420, rm.a);
     chests.push({ x: Math.round(cx), y: Math.round(cy) });
   });
-  // 방 사이: 작은 캠프 + 엘리트(3곳)
   for (let i = 0; i < 6; i++) {
-    const a = ((i + 0.5) * TAU) / 6;
-    const [x, y] = polar(1880, a);
+    const a = deg(30 + i * 60);
+    const [x, y] = polar(2450, a);
     camps.push({ x: Math.round(x), y: Math.round(y), type: 'small' });
-    if (i % 2 === 0) {
-      const [ex, ey] = polar(2120, a);
-      camps.push({ x: Math.round(ex), y: Math.round(ey), type: 'elite' });
-    }
-    const [cx, cy] = polar(1500, a);
+    const [cx, cy] = polar(1940, a);
     chests.push({ x: Math.round(cx), y: Math.round(cy) });
   }
-  // 중간 지대: 구역마다 캠프 2 + 상자 2
-  for (let i = 0; i < 3; i++) {
-    const base = (i * TAU) / 3 + Math.PI / 3;
+  for (const e of elites) camps.push({ ...e, type: 'elite' });
+  for (const d of [60, 180, 300]) {
     for (const off of [-0.42, 0.42]) {
-      const [x, y] = polar(940, base + off);
+      const [x, y] = polar(1200, deg(d) + off);
       camps.push({ x: Math.round(x), y: Math.round(y), type: off < 0 ? 'small' : 'ranged' });
     }
-    for (const off of [-0.25, 0.25]) {
-      const [x, y] = polar(1080, base + off);
+    for (const off of [-0.24, 0.24]) {
+      const [x, y] = polar(1420, deg(d) + off);
       chests.push({ x: Math.round(x), y: Math.round(y) });
     }
   }
-  // 성소 안: 상자 2
-  chests.push({ x: 0, y: -180 }, { x: 0, y: 180 });
+  chests.push({ x: 0, y: -230 }, { x: 0, y: 230 });
 
-  // 기둥/바위: 벽·제단·캠프·상자와 겹치지 않게
   const pillars = [];
   const clear = (x, y, r) => {
-    if (x * x + y * y > (R - r - 80) ** 2) return false;
-    for (const w of walls) if (segPointDist2(w[0], w[1], w[2], w[3], x, y) < (r + w[4] / 2 + 70) ** 2) return false;
-    for (const p of pillars) if (dist2(x, y, p.x, p.y) < (r + p.r + 80) ** 2) return false;
-    for (const q of [...altars, ...camps, ...chests]) if (dist2(x, y, q.x, q.y) < (r + 140) ** 2) return false;
+    if (x * x + y * y > (R - r - 90) ** 2) return false;
+    for (const w of walls) if (segPointDist2(w[0], w[1], w[2], w[3], x, y) < (r + w[4] / 2 + 90) ** 2) return false;
+    for (const p of pillars) if (dist2(x, y, p.x, p.y) < (r + p.r + 110) ** 2) return false;
+    for (const q of [...altars, ...camps, ...chests]) if (dist2(x, y, q.x, q.y) < (r + 170) ** 2) return false;
     return true;
   };
-  // 성소 기둥 링
+  // 성소: 기둥 8개와 화로 4개를 대칭으로
   for (let i = 0; i < 8; i++) {
-    const [x, y] = polar(330, (i * TAU) / 8 + Math.PI / 8);
-    if (clear(x, y, 24)) pillars.push({ x: Math.round(x), y: Math.round(y), r: 24, k: i % 2 ? 1 : 2 });
+    const [x, y] = polar(470, deg(i * 45 + 22.5));
+    pillars.push({ x: Math.round(x), y: Math.round(y), r: 26, k: i % 2 ? 1 : 2 });
   }
-  for (let tries = 0; tries < 3000 && pillars.length < 70; tries++) {
-    const a = rng() * TAU;
-    const d = 650 + Math.sqrt(rng()) * (R - 700);
-    const [x, y] = polar(d, a);
-    const r = rng.range(22, 52);
-    if (clear(x, y, r)) pillars.push({ x: Math.round(x), y: Math.round(y), r: Math.round(r), k: rng() < 0.15 ? 2 : rng() < 0.5 ? 1 : 0 });
+  // 제단 지대·바깥: 대칭(6방향)으로 배치해 깔끔하게
+  const base = [];
+  for (let tries = 0; tries < 400 && base.length < 9; tries++) {
+    const a = rng() * deg(60);
+    const d = SANCTUM + 150 + rng() * (R - SANCTUM - 300);
+    const r = Math.round(rng.range(24, 46));
+    const pts = [];
+    let ok = true;
+    for (let k = 0; k < 6; k++) {
+      const [x, y] = polar(d, a + deg(k * 60));
+      if (!clear(x, y, r)) ok = false;
+      pts.push([x, y]);
+    }
+    if (!ok) continue;
+    const kind = rng() < 0.2 ? 2 : rng() < 0.6 ? 1 : 0;
+    for (const [x, y] of pts) pillars.push({ x: Math.round(x), y: Math.round(y), r, k: kind });
+    base.push(1);
   }
 
-  // 시작 위치: 바깥 지대 둘레
-  const spawns = [];
-  for (let i = 0; i < 16; i++) {
-    const [x, y] = polar(2000, (i * TAU) / 16 + TAU / 32);
-    spawns.push([Math.round(x), Math.round(y)]);
+  // 시작 위치 16곳: 바깥 둘레에서 캠프 어그로 범위(420) 밖, 벽과 떨어진 곳을 고르게
+  const cand = [];
+  for (const r of [2600, 2720, 2840]) {
+    for (let d = 0; d < 360; d += 1.5) {
+      const [x, y] = polar(r, deg(d));
+      if (camps.some((c) => dist2(x, y, c.x, c.y) < 500 * 500)) continue;
+      if (walls.some((w) => segPointDist2(w[0], w[1], w[2], w[3], x, y) < 70 * 70)) continue;
+      if (pillars.some((p) => dist2(x, y, p.x, p.y) < (p.r + 60) ** 2)) continue;
+      cand.push([Math.round(x), Math.round(y)]);
+    }
+  }
+  // 가장 먼 점 고르기로 고르게 퍼뜨림
+  const spawns = [cand[0]];
+  while (spawns.length < 16 && spawns.length < cand.length) {
+    let best = null;
+    let bestD = -1;
+    for (const c of cand) {
+      let m = Infinity;
+      for (const q of spawns) m = Math.min(m, dist2(c[0], c[1], q[0], q[1]));
+      if (m > bestD) {
+        bestD = m;
+        best = c;
+      }
+    }
+    spawns.push(best);
   }
 
-  return { id: 'ruins', name: '명계 폐허', R, walls, pillars, altars, camps, chests, spawns, zone: { x: 0, y: 0 } };
+  // 렌더링용 장식: 구역별 바닥
+  const decor = {
+    regions: [
+      { r0: 0, r1: SANCTUM, style: 'sanctum' },
+      { r0: SANCTUM, r1: MID, style: 'mid' },
+      { r0: MID, r1: R, style: 'outer' },
+    ],
+  };
+
+  return { id: 'ruins', name: '명계 폐허', R, walls, pillars, altars, camps, chests, spawns, zone: { x: 0, y: 0 }, decor };
 }
 
 export const MAPS = {
