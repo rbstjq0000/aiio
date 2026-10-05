@@ -5,7 +5,7 @@ import { NavGrid } from '../shared/nav.js';
 
 const NAV_CACHE = new Map();
 const ATTACK_CURSOR = `url("data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28"><path d="M3 3 L17 17 M17 13 L13 17 M15 19 L19 15 M18 18 L24 24" stroke="#ff3d4f" stroke-width="3" stroke-linecap="round"/><path d="M3 3 L17 17" stroke="#fff" stroke-width="1"/></svg>')}") 3 3, crosshair`;
-import { WEAPONS, ARMORS, BOOTS, SPELLS, RARITIES, ORBS, WEAPON_IDS, ARMOR_IDS, BOOT_IDS, KIND_IDS, SLOT_KINDS, itemDef } from '../shared/items.js';
+import { WEAPONS, ARMORS, BOOTS, RARITIES, ORBS, WEAPON_IDS, ARMOR_IDS, BOOT_IDS, KIND_IDS, SLOT_KINDS, itemDef } from '../shared/items.js';
 import { MONSTER_TYPES } from '../shared/monsters.js';
 import { PROJ_KINDS, AREA_KINDS, ALTAR_STATE, PF } from '../shared/sim.js';
 import { COSMETIC_MAP } from '../shared/cosmetics.js';
@@ -137,7 +137,6 @@ export class GameClient {
     this.hist = [];
     this.seq = 0;
     this.input.counters = new Array(C.PRESS_N).fill(0);
-    this.lastSpell = [0, 0];
     this.interactTarget = 0;
     this.atkTarget = 0;
     this.atkMove = false;
@@ -494,24 +493,7 @@ export class GameClient {
       if (this.predAct.t <= 0) this.predAct = null;
     }
     if (me.chn >= 0) speed = 0;
-    // 점멸만 즉시 예측 (나머지 이동기는 서버 결과로 보정)
-    let sp = null;
-    for (let i = 0; i < 2; i++) {
-      const idx = i === 0 ? C.PRESS.d : C.PRESS.f;
-      if (p[idx] > this.lastSpell[i]) {
-        this.lastSpell[i] = p[idx];
-        const spell = SPELLS[this.ui.spells[i]];
-        if (spell.type === 'blink' && me.cd[3 + i] <= 0 && me.st === 0) {
-          const dx = wx - this.pred.x;
-          const dy = wy - this.pred.y;
-          const len = Math.hypot(dx, dy) || 1;
-          sp = { dx: dx / len, dy: dy / len, dist: Math.min(spell.dist, len) };
-          this.applyBlink(this.pred, sp);
-          this.moveTarget = null;
-          this.path = null;
-        }
-      }
-    }
+    const sp = null;
     stepBody(this.pred, mx, my, speed, C.DT, this.map.obstacles, this.map.R);
     this.hist.push({ seq: this.seq, mx, my, speed, sp });
     if (this.hist.length > 90) this.hist.shift();
@@ -631,6 +613,8 @@ export class GameClient {
       len: a[11],
       width: a[12],
       outer: a[14] || 0,
+      owner: a[9],
+      cos: AREA_KINDS[a[1]] === 'shadow' ? this.cosOf(a[9]) : null,
       ticks: AREA_KINDS[a[1]] === 'ground' ? 2 : 1,
     }));
     const souls = latest.so.map((o) => ({ id: o[0], x: o[1], y: o[2], v: o[3] }));
@@ -824,6 +808,39 @@ export class GameClient {
         play('dash', this.vol(e.x, e.y) * (isMe ? 1 : 0.5));
         break;
       }
+      case 'shadow':
+        R.beam(e.x, e.y, e.x2, e.y2, '#7a3cff', 6, 0.25);
+        R.burst(e.x2, e.y2, '#b28cff', 14, 200, 4, 0.4);
+        play('blink', this.vol(e.x, e.y) * 0.7);
+        break;
+      case 'mark':
+        R.text(e.x, e.y - 60, '표식', '#c56bff', 18, 1);
+        R.ring(e.x, e.y, 10, 60, '#c56bff', 0.4, 6);
+        break;
+      case 'markpop':
+        R.ring(e.x, e.y, 10, 110, '#ff3d6b', 0.45, 12);
+        R.burst(e.x, e.y, '#c56bff', 30, 420, 6, 0.6);
+        R.shake(10 * this.vol(e.x, e.y));
+        play('boom', this.vol(e.x, e.y));
+        break;
+      case 'conflag':
+        R.beam(e.x, e.y, e.x2, e.y2, '#ff7a2e', 8, 0.3);
+        R.burst(e.x2, e.y2, '#ffb070', 18, 300, 5, 0.5);
+        if (e.r) R.ring(e.x2, e.y2, 20, e.r, '#ff5a1f', 0.4, 8);
+        play('fire', this.vol(e.x, e.y));
+        break;
+      case 'dunk':
+        R.text(e.x, e.y - 60, e.n >= 5 ? '단두대!!' : '단두대', '#ff6b3d', e.n >= 5 ? 24 : 18, 1);
+        R.ring(e.x, e.y, 10, 120, '#ff6b3d', 0.4, 12);
+        R.shake(12 * this.vol(e.x, e.y));
+        play('boom', this.vol(e.x, e.y));
+        break;
+      case 'reset':
+        if (isMe) this.hud.announce('궁극기 초기화!', '#ff6b3d', 1.2);
+        break;
+      case 'passive':
+        R.burst(e.x, e.y, '#c56bff', 10, 220, 4, 0.4);
+        break;
       case 'empower':
         R.ring(e.x, e.y, 10, 60, '#ff6b3d', 0.3, 6);
         R.burst(e.x, e.y, '#ffb070', 12, 220, 4, 0.4);

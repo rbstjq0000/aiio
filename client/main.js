@@ -1,5 +1,5 @@
 // 진입점: 메뉴 / 상점 / 로비 / 게임 / 결과 화면 연결
-import { WEAPONS, WEAPON_IDS, RARITIES, SPELLS, SPELL_IDS, DEFAULT_SPELLS } from '../shared/items.js';
+import { WEAPONS, WEAPON_IDS, RARITIES } from '../shared/items.js';
 import { COSMETICS, COSMETIC_MAP, COSMETIC_TYPES, RARITY_LABEL, RARITY_COLOR } from '../shared/cosmetics.js';
 import { MAX_PLAYERS } from '../shared/constants.js';
 import { Renderer } from './render.js';
@@ -147,29 +147,6 @@ function renderWeapons() {
   }
 }
 
-function renderSpells() {
-  const box = $('spells');
-  box.innerHTML = '';
-  const sel = profile.d.spells || (profile.d.spells = DEFAULT_SPELLS.slice());
-  for (const id of SPELL_IDS) {
-    const sp = SPELLS[id];
-    const b = document.createElement('button');
-    const idx = sel.indexOf(id);
-    b.className = `spell-btn${idx >= 0 ? ' sel' : ''}`;
-    b.title = `${sp.desc} · ${sp.cd}초`;
-    b.innerHTML = `<i>${sp.icon}</i>${sp.name}${idx >= 0 ? `<b>${idx ? 'F' : 'D'}</b>` : ''}`;
-    b.onclick = () => {
-      const i = sel.indexOf(id);
-      if (i >= 0) return;
-      sel.shift();
-      sel.push(id);
-      profile.save();
-      renderSpells();
-      play('ui');
-    };
-    box.appendChild(b);
-  }
-}
 
 function renderQuests() {
   const box = $('quests');
@@ -202,7 +179,6 @@ function renderMenu() {
   renderWallet();
   renderAccount();
   renderWeapons();
-  renderSpells();
   renderQuests();
 }
 
@@ -242,7 +218,7 @@ pollStatus();
 // ---------------- 게임 시작 ----------------
 function joinMsg(mode, extra = {}) {
   const name = ($('name').value || '').trim() || `영혼${Math.floor(Math.random() * 900 + 100)}`;
-  return { t: 'join', mode, name, weapon: profile.d.weapon, spells: profile.d.spells || DEFAULT_SPELLS, cos: profile.d.equipped, ...extra };
+  return { t: 'join', mode, name, weapon: profile.d.weapon, cos: profile.d.equipped, ...extra };
 }
 
 async function connect(kind, msg, opts = {}) {
@@ -308,7 +284,7 @@ $('room-join-go').onclick = () => {
 
 const TIPS = [
   '오브를 들고 있으면 위치가 모두에게 보입니다. 혼자 다니지 마세요.',
-  '바닥에 빨간 예고가 보이면 우클릭으로 빠져나가거나 E·점멸로 피하세요.',
+  '바닥에 빨간 예고가 보이면 우클릭으로 빠져나가거나 이동기(E)로 피하세요.',
   '정글 캠프는 잡으면 일정 시간 뒤 다시 생깁니다. 동선을 짜서 돌아보세요.',
   'Q·W·E 스킬 각인이 모두 희귀 이상이면 R도 함께 강해집니다.',
   '기절·속박은 최대 1초, 이후 1.5초는 면역입니다.',

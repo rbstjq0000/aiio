@@ -2,12 +2,12 @@
 // 수치/규칙 근거: docs/COMBAT_DESIGN.md
 import { TAU, angleDiff, dist2, segPointDist2 } from './math.js';
 import * as C from './constants.js';
-import { WEAPONS, ARMORS, BOOTS, SPELLS, RARITIES, GRADE_CD, ultGrade, skillAt } from './items.js';
+import { WEAPONS, ARMORS, BOOTS, RARITIES, GRADE_CD, ultGrade, skillAt } from './items.js';
 import { startDash, resolveStatic, wallBlocked } from './physics.js';
 
 export const KIND_CODE = { basic: 0, skill: 1, ult: 2, dot: 3, monster: 4, slam: 5, zone: 6 };
 export const PROJ_KINDS = ['arrow', 'pierce', 'fireball', 'icebolt', 'lance', 'dagger', 'javelin', 'bone', 'orbshot'];
-export const AREA_KINDS = ['ground', 'field', 'ring', 'leap', 'line', 'slam', 'burn', 'flag'];
+export const AREA_KINDS = ['ground', 'field', 'ring', 'leap', 'line', 'slam', 'burn', 'flag', 'shadow', 'arena'];
 
 const PROJ_KIND_FOR = {
   longbow: { basic: 'arrow', q: 'pierce', w: 'arrow', e: 'orbshot', r: 'pierce' },
@@ -95,6 +95,11 @@ export const CombatMixin = {
     if (!this.canAct(p)) return false;
     const w = this.weapon(p);
     const sk = skillAt(w, key, this.gradeOf(p, key));
+    // 제드 W·R 다시 누르기: 그림자와 자리 바꾸기 (쿨타임과 별개)
+    if ((sk.type === 'shadow' || sk.type === 'mark') && p.st.rootT <= 0) {
+      const sh = this.ownShadows(p).find((a) => a.slot === key && !a.swapped);
+      if (sh) return this.swapShadow(p, sh);
+    }
     if (key === 'r') {
       if (p.ult < 100) return false;
     } else if (p.cd[key] > 0) return false;
@@ -113,6 +118,38 @@ export const CombatMixin = {
     p.cdRefund = 0;
     this.emit({ e: 'skill', id: p.id, k: key, w: p.gear.weapon.type, x: Math.round(p.x), y: Math.round(p.y), a: r2(p.aim) });
     return true;
+  },
+
+  ownShadows(p) {
+    return this.areas.filter((a) => a.alive && a.kind === 'shadow' && a.owner === p.id);
+  },
+
+  swapShadow(p, sh) {
+    const fx = p.x;
+    const fy = p.y;
+    p.x = sh.x;
+    p.y = sh.y;
+    sh.x = fx;
+    sh.y = fy;
+    sh.swapped = true;
+    p.kbx = 0;
+    p.kby = 0;
+    p.dashT = 0;
+    p.act = null;
+    resolveStatic(p, this.obstacles, this.R);
+    this.emit({ e: 'blink', id: p.id, x: Math.round(fx), y: Math.round(fy), x2: Math.round(p.x), y2: Math.round(p.y) });
+    return true;
+  },
+
+  // 다리우스 패시브 출혈
+  addBleed(u, src) {
+    if (!u.alive) return;
+    const bd = WEAPONS.greatsword.passive.bleed;
+    const b = u.st.bleed;
+    if (b && b.src === src.id) {
+      b.n = Math.min(bd.max, b.n + 1);
+      b.t = bd.t;
+    } else u.st.bleed = { n: 1, t: bd.t, tick: 0.5, src: src.id, per: bd.per * this.powerMult(src, 'skill', 'q') };
   },
 
   // 마우스 위치를 사거리 안으로 제한
@@ -258,6 +295,103 @@ export const CombatMixin = {
         }
         return true;
       }
+      case 'shadow': {
+        let [tx, ty] = this.aimPoint(p, sk.range);
+        // 벽 너머로는 못 보냄: 벽에 막히면 벽 앞까지
+        const steps = 12;
+        for (let i = 1; i <= steps; i++) {
+          const x = p.x + ((tx - p.x) * i) / steps;
+          const y = p.y + ((ty - p.y) * i) / steps;
+          if (wallBlocked(p.x, p.y, x, y, this.walls, 10)) {
+            tx = p.x + ((tx - p.x) * (i - 1)) / steps;
+            ty = p.y + ((ty - p.y) * (i - 1)) / steps;
+            break;
+          }
+        }
+        for (const a of this.ownShadows(p)) if (a.slot === 'w') a.alive = false;
+        p.act = { ...base, hitAt: 99, dur: 0.15, moveMult: 1 };
+        this.addArea({ kind: 'shadow', x: tx, y: ty, r: 18, delay: 0, ticks: 0, dur: sk.t, owner: p.id, team: p.team, slot: 'w', color: p.gear.weapon.type });
+        this.emit({ e: 'shadow', id: p.id, x: Math.round(p.x), y: Math.round(p.y), x2: Math.round(tx), y2: Math.round(ty) });
+        return true;
+      }
+      case 'mark': {
+        if (p.st.rootT > 0) return false;
+        const tgt = this.executeTarget(p, sk.range);
+        if (!tgt) return false;
+        for (const a of this.ownShadows(p)) if (a.slot === 'r') a.alive = false;
+        this.addArea({ kind: 'shadow', x: p.x, y: p.y, r: 18, delay: 0, ticks: 0, dur: sk.t, owner: p.id, team: p.team, slot: 'r', color: p.gear.weapon.type });
+        const fromX = p.x;
+        const fromY = p.y;
+        const dx = tgt.x - p.x;
+        const dy = tgt.y - p.y;
+        const d = Math.sqrt(dx * dx + dy * dy) || 1;
+        p.x = tgt.x + (dx / d) * (tgt.r + p.r + 8);
+        p.y = tgt.y + (dy / d) * (tgt.r + p.r + 8);
+        p.kbx = 0;
+        p.kby = 0;
+        resolveStatic(p, this.obstacles, this.R);
+        p.aim = Math.atan2(tgt.y - p.y, tgt.x - p.x);
+        p.st.iframeT = Math.max(p.st.iframeT, 0.6);
+        p.act = { ...base, hitAt: 99, dur: 0.3, moveMult: 0.5 };
+        this.emit({ e: 'blink', id: p.id, x: Math.round(fromX), y: Math.round(fromY), x2: Math.round(p.x), y2: Math.round(p.y) });
+        tgt.st.mark = { src: p.id, t: sk.markT, acc: 0, pct: sk.markPct };
+        this.emit({ e: 'mark', id: tgt.id, x: Math.round(tgt.x), y: Math.round(tgt.y) });
+        this.dealDamage(p, tgt, sk.dmg * this.powerMult(p, kind, key), { kind, pre: true, big: true });
+        return true;
+      }
+      case 'conflag': {
+        const tgt = this.executeTarget(p, sk.range);
+        if (!tgt) return false;
+        p.act = { ...base, hitAt: 99, dur: 0.25, moveMult: 0.6 };
+        p.aim = Math.atan2(tgt.y - p.y, tgt.x - p.x);
+        const pm = this.powerMult(p, kind, key);
+        const burning = this.burning(tgt);
+        const hit = (u) => {
+          const dealt = this.dealDamage(p, u, sk.dmg * pm, { kind, pre: true });
+          if (dealt >= 0 && sk.dot) this.addDot(u, sk.dot.dmg * pm, sk.dot.t, p, 'burn');
+        };
+        this.emit({ e: 'conflag', id: p.id, x: Math.round(p.x), y: Math.round(p.y), x2: Math.round(tgt.x), y2: Math.round(tgt.y), r: burning ? sk.spread : 0 });
+        hit(tgt);
+        if (burning) {
+          for (const u of this.units) {
+            if (u === tgt || !u.alive || u.team === p.team) continue;
+            if (dist2(u.x, u.y, tgt.x, tgt.y) <= (sk.spread + u.r) ** 2) hit(u);
+          }
+        }
+        return true;
+      }
+      case 'bounce': {
+        const tgt = this.executeTarget(p, sk.range);
+        if (!tgt) return false;
+        p.act = { ...base, hitAt: 99, dur: 0.3, moveMult: 0.5 };
+        const ang = Math.atan2(tgt.y - p.y, tgt.x - p.x);
+        p.aim = ang;
+        const pm = this.powerMult(p, kind, key);
+        this.spawnProj(p, { angle: ang, speed: 900, range: sk.range * 1.6, dmg: sk.dmg * pm, r: 16, pkind: 'fireball', ckind: kind, homing: tgt.id, homeTurn: 30, dot: sk.dot ? { dmg: sk.dot.dmg * pm, t: sk.dot.t } : null, bounce: { left: sk.bounces - 1, r: sk.bounceR } });
+        return true;
+      }
+      case 'aegis': {
+        let n = 0;
+        for (const u of this.units) {
+          if (!u.alive || u.team === p.team) continue;
+          if (dist2(u.x, u.y, p.x, p.y) > (sk.r + u.r) ** 2) continue;
+          if (u.isPlayer) n++;
+          this.addSlow(u, sk.slow.amt, sk.slow.t, `aegis${p.id}`);
+        }
+        this.giveShield(p, (sk.shield + sk.perEnemy * n) * this.powerMult(p, kind, key), 3);
+        this.emit({ e: 'nova', id: p.id, x: Math.round(p.x), y: Math.round(p.y), r: sk.r, w: p.gear.weapon.type });
+        return true;
+      }
+      case 'arena': {
+        if (p.st.rootT > 0) return false;
+        const [tx, ty, d] = this.aimPoint(p, sk.range);
+        const ang = Math.atan2(ty - p.y, tx - p.x);
+        startDash(p, Math.cos(ang), Math.sin(ang), sk.air, Math.max(40, d));
+        p.act = { ...base, hitAt: 99, dur: sk.air + 0.12, moveMult: 0, dir: ang };
+        this.addArea({ kind: 'leap', x: tx, y: ty, r: sk.r, delay: sk.air, dur: sk.air + 0.05, owner: p.id, team: p.team, dmg: sk.dmg * this.powerMult(p, kind, key), ckind: kind, color: p.gear.weapon.type, follow: true });
+        this.addArea({ kind: 'arena', x: tx, y: ty, r: sk.arenaR, delay: sk.air, ticks: 0, dur: sk.air + sk.t, owner: p.id, team: p.team, color: p.gear.weapon.type, follow: true });
+        return true;
+      }
       case 'execute': {
         if (p.st.rootT > 0) return false;
         const tgt = this.executeTarget(p, sk.range);
@@ -275,14 +409,17 @@ export const CombatMixin = {
         p.aim = Math.atan2(tgt.y - p.y, tgt.x - p.x);
         p.act = { ...base, hitAt: 99, dur: 0.3, moveMult: 0.3 };
         this.emit({ e: 'blink', id: p.id, x: Math.round(fromX), y: Math.round(fromY), x2: Math.round(p.x), y2: Math.round(p.y) });
-        const dmg = (sk.dmg + sk.missing * (tgt.maxHp - tgt.hp)) * this.powerMult(p, kind, key);
-        this.dealDamage(p, tgt, dmg, { kind, pre: true, big: true });
+        const stacks = tgt.st.bleed && tgt.st.bleed.src === p.id ? tgt.st.bleed.n : 0;
+        const dmg = (sk.dmg + (sk.missing || 0) * (tgt.maxHp - tgt.hp)) * (1 + (sk.bleedBonus || 0) * stacks) * this.powerMult(p, kind, key);
+        if (sk.bleedBonus) this.emit({ e: 'dunk', id: tgt.id, x: Math.round(tgt.x), y: Math.round(tgt.y), n: stacks });
+        this.dealDamage(p, tgt, dmg, { kind, pre: true, big: true, true: !!sk.trueDmg });
         // 처형선 아래로 떨어지면 즉사
         if (tgt.alive && sk.threshold && tgt.hp <= tgt.maxHp * sk.threshold) {
           this.emit({ e: 'execute', id: tgt.id, x: Math.round(tgt.x), y: Math.round(tgt.y) });
           this.dealDamage(p, tgt, tgt.hp + tgt.st.shield + 1, { kind, pre: true, big: true, true: true });
         }
         if (!tgt.alive && sk.ultRefund && tgt.isPlayer) p.ultBack = sk.ultRefund;
+        if (!tgt.alive && sk.ultRefund >= 100 && tgt.isPlayer) this.emit({ e: 'reset', id: p.id, x: Math.round(p.x), y: Math.round(p.y) });
         return true;
       }
       default:
@@ -417,6 +554,14 @@ export const CombatMixin = {
           rootAll: !!sk.rootAll,
           big: kind === 'ult',
         });
+        // 제드 Q: 그림자들도 커서 쪽으로 같이 던짐
+        if (sk.fromShadows) {
+          const cx = Number.isFinite(p.input.cx) ? p.input.cx : p.x + Math.cos(p.aim) * 300;
+          const cy = Number.isFinite(p.input.cy) ? p.input.cy : p.y + Math.sin(p.aim) * 300;
+          for (const sh of this.ownShadows(p)) {
+            this.spawnProj(p, { x: sh.x, y: sh.y, angle: Math.atan2(cy - sh.y, cx - sh.x), speed: sk.speed, range: sk.range, dmg: sk.dmg * this.powerMult(p, kind, key), r: sk.r, pierce: sk.pierce || 0, pkind: pk, ckind: kind });
+          }
+        }
         break;
       }
       case 'fan': {
@@ -444,10 +589,30 @@ export const CombatMixin = {
         }
         break;
       }
-      case 'nova':
-        this.novaHit(p, sk.r, sk.dmg * this.powerMult(p, kind, key), sk.knock, kind, wtype, sk.slow);
+      case 'nova': {
+        let hits = this.novaHit(p, sk.r, sk.dmg * this.powerMult(p, kind, key), sk.knock, kind, wtype, sk.slow);
         if (sk.shieldSelf) this.giveShield(p, sk.shieldSelf * this.powerMult(p, kind, key), 2.5);
+        // 제드 E: 그림자 주변도 벰 (한 대상은 한 번만 맞음, 그림자에 맞으면 둔화)
+        if (sk.fromShadows) {
+          const done = new Set();
+          for (const u of this.units) if (u.alive && u !== p && dist2(u.x, u.y, p.x, p.y) <= (sk.r + u.r) ** 2) done.add(u.id);
+          for (const sh of this.ownShadows(p)) {
+            this.emit({ e: 'nova', id: p.id, x: Math.round(sh.x), y: Math.round(sh.y), r: sk.r, w: wtype });
+            for (const u of this.units) {
+              if (!u.alive || u.team === p.team || done.has(u.id)) continue;
+              if (dist2(u.x, u.y, sh.x, sh.y) > (sk.r + u.r) ** 2) continue;
+              done.add(u.id);
+              const dealt = this.dealDamage(p, u, sk.dmg * this.powerMult(p, kind, key), { kind, pre: true });
+              if (dealt >= 0) {
+                hits++;
+                if (sk.shadowSlow) this.addSlow(u, sk.shadowSlow.amt, sk.shadowSlow.t, `shadow${p.id}`);
+              }
+            }
+          }
+        }
+        if (hits > 0 && sk.hitRefund) for (const k in sk.hitRefund) p.cd[k] = Math.max(0, p.cd[k] - sk.hitRefund[k]);
         break;
+      }
       case 'pull': {
         const dmg = sk.dmg * this.powerMult(p, kind, key);
         this.emit({ e: 'cone', id: p.id, x: Math.round(p.x), y: Math.round(p.y), a: r2(a.dir), r: sk.range, arc: sk.arc, w: wtype, k: 1 });
@@ -464,6 +629,7 @@ export const CombatMixin = {
           const dealt = this.dealDamage(p, u, dmg, { kind, pre: true });
           if (dealt < 0) continue;
           if (sk.slow) this.addSlow(u, sk.slow.amt, sk.slow.t, `pull${p.id}`);
+          if (wtype === 'greatsword') this.addBleed(u, p);
           // 끌어당김: 보스·CC 면역은 끌려오지 않음
           if (u.ccImmune || u.st.ccImmT > 0 || u.st.bulwarkT > 0) continue;
           const pullDist = d - (p.r + u.r + 24);
@@ -555,6 +721,7 @@ export const CombatMixin = {
       if (Math.abs(angleDiff(dir, Math.atan2(dy, dx))) > c.arc / 2 + tol) continue;
       const dealt = this.dealDamage(p, u, dmg + (emp ? emp.bonus : 0), { kind, pre: true, big: !!emp });
       if (dealt >= 0 && c.knock) this.knock(u, p.x, p.y, c.knock, p);
+      if (dealt >= 0 && kind === 'basic') this.basicPassive(p, u);
       if (dealt >= 0 && emp) {
         hitAny = true;
         if (emp.slow) this.addSlow(u, emp.slow.amt, emp.slow.t, `emp${p.id}`);
@@ -566,6 +733,20 @@ export const CombatMixin = {
       p.st.empT = 0;
       p.st.emp = null;
       this.emit({ e: 'empowerhit', id: p.id, x: Math.round(p.x), y: Math.round(p.y), a: r2(dir) });
+    }
+  },
+
+  // 직업 패시브 (기본 공격 적중 시): 대검 출혈, 쌍단검 약자 멸시
+  basicPassive(p, u) {
+    const wt = p.gear.weapon.type;
+    if (wt === 'greatsword') this.addBleed(u, p);
+    else if (wt === 'daggers' && u.alive) {
+      const pv = WEAPONS.daggers.passive;
+      if (u.hp < u.maxHp * pv.lowHp && (u.zedT || 0) <= this.time) {
+        u.zedT = this.time + pv.cd;
+        this.emit({ e: 'passive', id: u.id, x: Math.round(u.x), y: Math.round(u.y) });
+        this.dealDamage(p, u, u.maxHp * pv.pct, { kind: 'skill', pre: true, big: true });
+      }
     }
   },
 
@@ -581,54 +762,6 @@ export const CombatMixin = {
       if (dealt >= 0) n++;
     }
     return n;
-  },
-
-  // ---------------- 보조 주문 (D·F) ----------------
-  trySpell(p, slot) {
-    const id = p.spells[slot === 'd' ? 0 : 1];
-    const sp = SPELLS[id];
-    if (!p.alive || !sp || p.cd[slot] > 0) return false;
-    if (sp.type !== 'purify' && p.st.stunT > 0) return false;
-    if (sp.type === 'blink' && p.st.rootT > 0) return false;
-    if (sp.type === 'blink') {
-      let dx = (Number.isFinite(p.input.cx) ? p.input.cx : p.x + Math.cos(p.aim)) - p.x;
-      let dy = (Number.isFinite(p.input.cy) ? p.input.cy : p.y + Math.sin(p.aim)) - p.y;
-      const len = Math.sqrt(dx * dx + dy * dy) || 1;
-      const dist = Math.min(sp.dist, len);
-      dx /= len;
-      dy /= len;
-      p.act = null;
-      p.channel = null;
-      const fx = p.x;
-      const fy = p.y;
-      p.x += dx * dist;
-      p.y += dy * dist;
-      p.kbx = 0;
-      p.kby = 0;
-      p.dashT = 0;
-      resolveStatic(p, this.obstacles, this.R);
-      this.emit({ e: 'blink', id: p.id, x: Math.round(fx), y: Math.round(fy), x2: Math.round(p.x), y2: Math.round(p.y) });
-    } else if (sp.type === 'sprint') {
-      p.st.sprintT = sp.t;
-      p.st.slows.length = 0;
-      this.emit({ e: 'sprint', id: p.id, x: Math.round(p.x), y: Math.round(p.y) });
-    } else if (sp.type === 'purify') {
-      p.st.stunT = 0;
-      p.st.rootT = 0;
-      p.st.slows.length = 0;
-      p.st.ccImmT = Math.max(p.st.ccImmT, sp.immune);
-      p.st.shield = Math.max(p.st.shield, sp.shield);
-      p.st.shieldT = 3;
-    } else if (sp.type === 'bulwark') {
-      p.st.bulwarkT = sp.t;
-    } else if (sp.type === 'shadow') {
-      p.st.invisT = sp.t;
-      p.act = null;
-    }
-    p.cd[slot] = sp.cd;
-    p.cdMax[slot] = sp.cd;
-    this.emit({ e: 'spell', id: p.id, k: sp.type, x: Math.round(p.x), y: Math.round(p.y) });
-    return true;
   },
 
   // ---------------- 피해 ----------------
@@ -659,9 +792,11 @@ export const CombatMixin = {
     if (dmg <= 0) return 0;
     tgt.hp -= dmg;
     tgt.lastDmgT = this.time;
+    if (tgt.st.mark && src && tgt.st.mark.src === src.id) tgt.st.mark.acc += dmg;
     if (src && src.isPlayer && src !== tgt) {
       src.dmgDealt += tgt.isPlayer ? dmg : 0;
       src.ult = Math.min(100, src.ult + dmg * C.ULT_PER_DMG * (tgt.isPlayer ? 1 : 0.3) * (src.orbs.includes(2) ? 2 : 1));
+      if (!tgt.isPlayer && !tgt.resetting) this.aggroMonster(tgt, src);
       if (tgt.isPlayer) {
         tgt.lastHitBy = src.id;
         tgt.lastHitByT = this.time;
@@ -679,6 +814,14 @@ export const CombatMixin = {
     });
     if (tgt.hp <= 0) this.killUnit(tgt, src, ctx);
     return dmg;
+  },
+
+  // 정글 몬스터를 때리면 그 캠프 전체가 때린 사람을 노림
+  aggroMonster(m, src) {
+    if (m.target === src.id) return;
+    m.target = src.id;
+    if (!m.camp) return;
+    for (const o of this.monsters) if (o.alive && o.camp === m.camp && !o.target && !o.resetting) o.target = src.id;
   },
 
   heal(u, amt) {
@@ -824,6 +967,27 @@ export const CombatMixin = {
         for (const q of st.slows) q.t -= dt;
         st.slows = st.slows.filter((q) => q.t > 0);
       }
+      if (st.bleed) {
+        const b = st.bleed;
+        b.t -= dt;
+        b.tick -= dt;
+        if (b.tick <= 0) {
+          b.tick += 0.5;
+          this.dealDamage(this.byId.get(b.src) || null, u, b.per * b.n * 0.5, { kind: 'dot', pre: true });
+        }
+        if (b.t <= 0 || !u.alive) st.bleed = null;
+      }
+      if (st.mark) {
+        const m = st.mark;
+        m.t -= dt;
+        if (m.t <= 0) {
+          st.mark = null;
+          const src = this.byId.get(m.src) || null;
+          this.emit({ e: 'markpop', id: u.id, x: Math.round(u.x), y: Math.round(u.y) });
+          if (m.acc > 0) this.dealDamage(src, u, m.acc * m.pct, { kind: 'ult', pre: true, big: true });
+        }
+      }
+      if (!u.alive) continue;
       if (st.dots.length) {
         for (const d of st.dots) {
           d.tick -= dt;
@@ -874,6 +1038,8 @@ export const CombatMixin = {
       homing: o.homing || 0,
       homeTurn: o.homeTurn || 6,
       group: o.group || null,
+      bounce: o.bounce || null,
+      ignoreId: o.ignoreId || 0, // 튕겨 나온 직후엔 방금 맞힌 대상을 무시
       big: !!o.big,
       color: owner.isPlayer ? owner.gear.weapon.type : '',
       alive: true,
@@ -919,6 +1085,7 @@ export const CombatMixin = {
       for (const u of this.units) {
         if (!u.alive || u.team === pr.team) continue;
         if (pr.hit && pr.hit.has(u.id)) continue;
+        if (pr.ignoreId === u.id && pr.dist < 140) continue;
         // 다발 사격은 한 대상에 한 발만
         if (pr.group && pr.group.has(u.id)) continue;
         const rr = u.r + pr.r;
@@ -954,6 +1121,27 @@ export const CombatMixin = {
 
   // 스킬 투사체 적중 효과: 쿨 감소, 거리 비례 기절, 불타는 적 기절, 폭발
   projOnHit(owner, pr, u, wasBurning) {
+    // 브랜드 R: 주변 적에게 튕김 (없으면 같은 적에게 다시)
+    if (pr.bounce && pr.bounce.left > 0) {
+      let next = null;
+      let bd = Infinity;
+      for (const o of this.units) {
+        if (!o.alive || o.team === pr.team || o === u) continue;
+        const d = dist2(o.x, o.y, u.x, u.y) * (o.isPlayer ? 0.6 : 1);
+        if (d < pr.bounce.r * pr.bounce.r && d < bd) {
+          bd = d;
+          next = o;
+        }
+      }
+      if (!next && u.alive) next = u;
+      if (next) {
+        const off = next === u ? 60 : 0;
+        const a0 = this.rng() * TAU;
+        const sx = u.x + Math.cos(a0) * off;
+        const sy = u.y + Math.sin(a0) * off;
+        this.spawnProj(owner, { x: sx, y: sy, angle: Math.atan2(next.y - sy, next.x - sx) + (off ? 0.8 : 0), speed: 900, range: 1600, dmg: pr.dmg, r: pr.r, pkind: pr.pkind, ckind: pr.ckind, homing: next.id, homeTurn: 30, dot: pr.dot, bounce: { left: pr.bounce.left - 1, r: pr.bounce.r }, big: true, ignoreId: u.id });
+      }
+    }
     if (pr.refund) {
       for (const k in pr.refund) owner.cd[k] = Math.max(0, owner.cd[k] - pr.refund[k]);
       pr.refund = null;
@@ -1000,6 +1188,8 @@ export const CombatMixin = {
       knock: o.knock || 0,
       after: o.after || null,
       outer: o.outer || null,
+      slot: o.slot || '',
+      swapped: false,
       heal: o.heal || 0,
       dot: o.dot || null,
       burnBonus: o.burnBonus || 0,
@@ -1034,6 +1224,7 @@ export const CombatMixin = {
     for (const a of this.areas) {
       if (!a.alive) continue;
       a.t += dt;
+      if (a.kind === 'arena' && a.t >= a.delay) this.arenaWalls(a);
       if (a.follow && !a.fired) {
         const o = this.byId.get(a.owner);
         if (o && o.alive && a.kind === 'ring') {
@@ -1075,6 +1266,33 @@ export const CombatMixin = {
     if (this.areas.some((a) => !a.alive)) this.areas = this.areas.filter((a) => a.alive);
   },
 
+  // 자르반 R 격투장: 안에 있는 적은 못 나가고 밖에 있는 적은 못 들어옴
+  arenaWalls(a) {
+    // 벽이 세워지는 순간 안에 있던 적을 기억
+    if (!a.inside) {
+      a.inside = new Set();
+      for (const u of this.units) if (u.alive && u.team !== a.team && dist2(u.x, u.y, a.x, a.y) < a.r * a.r) a.inside.add(u.id);
+      this.emit({ e: 'areafx', k: 'arena', x: Math.round(a.x), y: Math.round(a.y), r: a.r, w: a.color });
+    }
+    for (const u of this.units) {
+      if (!u.alive || u.team === a.team || u.ccImmune) continue;
+      const dx = u.x - a.x;
+      const dy = u.y - a.y;
+      const d = Math.sqrt(dx * dx + dy * dy) || 1;
+      if (a.inside.has(u.id)) {
+        if (d > a.r - u.r) {
+          u.x = a.x + (dx / d) * (a.r - u.r);
+          u.y = a.y + (dy / d) * (a.r - u.r);
+          u.kbx = u.kby = 0;
+          u.dashT = 0;
+        }
+      } else if (d < a.r + u.r && d > a.r - 40) {
+        u.x = a.x + (dx / d) * (a.r + u.r);
+        u.y = a.y + (dy / d) * (a.r + u.r);
+      }
+    }
+  },
+
   areaTick(a) {
     const owner = this.byId.get(a.owner) || null;
     if (a.kind === 'leap' && owner && owner.alive) {
@@ -1114,6 +1332,7 @@ export const CombatMixin = {
       if (a.kind === 'burn') u.st.burnT = Math.max(u.st.burnT, 0.7);
       if (a.dot) this.addDot(u, a.dot.dmg, a.dot.t, owner, a.color === 'firestaff' ? 'burn' : 'bleed');
       if (a.heal && owner && owner.alive) this.heal(owner, a.heal * (u.isPlayer ? 1 : 0.35));
+      if (a.kind === 'ring' && a.color === 'greatsword' && owner && owner.isPlayer) this.addBleed(u, owner);
       if (a.stun) this.stun(u, a.stun);
       if (a.root) this.root(u, a.root);
       if (a.slow) this.addSlow(u, a.slow.amt, a.slow.t, `area${a.id}`);

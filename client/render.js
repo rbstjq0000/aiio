@@ -718,6 +718,10 @@ export class Renderer {
         }
       } else if (a.kind === 'flag') {
         this.drawFlag(a, t, col, pre, prog);
+      } else if (a.kind === 'shadow') {
+        this.drawShadowClone(a, v);
+      } else if (a.kind === 'arena') {
+        this.drawArena(a, t, enemy, pre, prog);
       } else if (a.kind === 'field') {
         if (pre) {
           ctx.beginPath();
@@ -823,6 +827,75 @@ export class Renderer {
     ctx.globalCompositeOperation = 'lighter';
     ctx.drawImage(glow(fc), -20, -70, 40, 40);
     ctx.globalCompositeOperation = 'source-over';
+  }
+
+  // 제드 그림자: 주인과 같은 모습을 어둡고 반투명하게
+  drawShadowClone(a, v) {
+    const ctx = this.ctx;
+    const left = a.dur - a.t;
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, left / 0.4) * 0.55;
+    ctx.translate(a.x, a.y);
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.drawImage(glow('#7a3cff'), -46, -46, 92, 92);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.restore();
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, left / 0.4) * 0.6;
+    const owner = v.players.find((p) => p.id === a.owner);
+    this.drawPlayer({ id: -a.id, x: a.x, y: a.y, aim: owner ? owner.aim : 0, flags: 0, act: 0, actT: 0, w: 'daggers', wr: 0, orbs: 0, cos: a.cos || {}, me: false, hp: 1, maxHp: 1, vx: 0, vy: 0 }, v);
+    // 어둡게 덮어 그림자처럼 (ctx.filter는 느려서 쓰지 않음)
+    ctx.beginPath();
+    ctx.arc(a.x, a.y, 22, 0, TAU);
+    ctx.fillStyle = 'rgba(20,6,40,0.6)';
+    ctx.fill();
+    ctx.restore();
+    // 남은 시간 고리 (W·R 다시 누르면 자리 바꿈)
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(a.x, a.y, 30, -Math.PI / 2, -Math.PI / 2 + TAU * Math.max(0, left / a.dur));
+    ctx.strokeStyle = 'rgba(178,140,255,0.8)';
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // 자르반 격투장: 바위 벽 고리
+  drawArena(a, t, enemy, pre, prog) {
+    const ctx = this.ctx;
+    ctx.translate(a.x, a.y);
+    if (pre) {
+      ctx.beginPath();
+      ctx.arc(0, 0, a.r, 0, TAU);
+      ctx.strokeStyle = hexA(enemy ? ENEMY_TELE : WCOLOR.spear, 0.5 * prog);
+      ctx.lineWidth = 3;
+      ctx.setLineDash([10, 10]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      return;
+    }
+    const n = 22;
+    for (let i = 0; i < n; i++) {
+      const ang = (i / n) * TAU;
+      const x = Math.cos(ang) * a.r;
+      const y = Math.sin(ang) * a.r;
+      ctx.beginPath();
+      ctx.arc(x, y, 17, 0, TAU);
+      ctx.fillStyle = '#5a4a3a';
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#2a2018';
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(x - 4, y - 5, 7, 0, TAU);
+      ctx.fillStyle = 'rgba(255,224,102,0.35)';
+      ctx.fill();
+    }
+    ctx.beginPath();
+    ctx.arc(0, 0, a.r, 0, TAU);
+    ctx.strokeStyle = hexA(WCOLOR.spear, 0.35 + 0.15 * Math.sin(t * 6));
+    ctx.lineWidth = 4;
+    ctx.stroke();
   }
 
   // 적이 준비 중인 스킬샷 예고선 (보고 피할 수 있게)
@@ -1130,7 +1203,7 @@ export class Renderer {
     ctx.lineWidth = 3;
     ctx.strokeStyle = hexA(wcol, 0.75);
     ctx.stroke();
-    if (!p.me) {
+    if (!p.me && p.id > 0) {
       ctx.beginPath();
       ctx.arc(0, 0, r + 12.5, 0, TAU);
       ctx.lineWidth = 1.5;
@@ -1635,6 +1708,36 @@ export class Renderer {
   drawStatus(p, r, t) {
     const ctx = this.ctx;
     const f = p.flags;
+    if (f & PF.MARK) {
+      // 제드 죽음의 표식: 머리 위 회전하는 표식
+      ctx.save();
+      ctx.translate(0, -r - 30);
+      ctx.rotate(t * 3);
+      ctx.strokeStyle = '#c56bff';
+      ctx.lineWidth = 3;
+      for (let i = 0; i < 3; i++) {
+        ctx.rotate(TAU / 3);
+        ctx.beginPath();
+        ctx.moveTo(0, -4);
+        ctx.lineTo(0, -13);
+        ctx.stroke();
+      }
+      ctx.beginPath();
+      ctx.arc(0, 0, 5, 0, TAU);
+      ctx.fillStyle = '#ff3d6b';
+      ctx.fill();
+      ctx.restore();
+    }
+    if (f & PF.BLEED) {
+      // 다리우스 출혈: 붉은 핏방울
+      for (let i = 0; i < 3; i++) {
+        const a = t * 2 + i * 2.1;
+        ctx.beginPath();
+        ctx.arc(Math.cos(a) * (r - 4), Math.sin(a) * (r - 4) + 4, 3, 0, TAU);
+        ctx.fillStyle = 'rgba(220,30,40,0.9)';
+        ctx.fill();
+      }
+    }
     if (f & PF.PROTECT) {
       ctx.beginPath();
       ctx.arc(0, 0, r + 9, 0, TAU);

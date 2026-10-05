@@ -2,19 +2,7 @@
 // 사냥 → 상자/장비 → 오브 쟁탈 → 교전/후퇴
 import { dist2 } from './math.js';
 import { PRESS } from './constants.js';
-import { WEAPONS, SPELLS, runeResult } from './items.js';
-
-function useSpell(p, wanted) {
-  for (let i = 0; i < 2; i++) {
-    const id = p.spells[i];
-    const slot = i === 0 ? 'd' : 'f';
-    if (wanted.includes(id) && p.cd[slot] <= 0) {
-      p.input.p[PRESS[slot]]++;
-      return true;
-    }
-  }
-  return false;
-}
+import { WEAPONS, runeResult } from './items.js';
 
 export const BOT_NAMES = [
   '그림자여우', 'Noctis', '망자의왕', 'Kairos', '하늘조각', 'Rinne', '불멸의토끼', 'Ashen',
@@ -25,12 +13,12 @@ export const BOT_NAMES = [
 
 // 무기별 교전 거리와 스킬 사용 조건
 const AI = {
-  greatsword: { pref: 70, reach: 105, q: { max: 175 }, w: { max: 220 }, e: { min: 130, max: 280, aim: true }, r: { max: 480, aim: true } },
-  daggers: { pref: 55, reach: 80, q: { min: 60, max: 650, aim: true }, w: { min: 120, max: 580, aim: true }, e: { min: 160, max: 420, ground: true }, r: { max: 360, exec: true } },
+  greatsword: { pref: 70, reach: 105, q: { max: 175 }, w: { max: 220 }, e: { min: 130, max: 310, aim: true }, r: { max: 460, exec: true } },
+  daggers: { pref: 55, reach: 80, q: { min: 60, max: 760, aim: true }, w: { min: 200, max: 650, ground: true }, e: { max: 170 }, r: { max: 520, exec: true } },
   longbow: { pref: 430, reach: 740, q: { min: 150, max: 900, aim: true }, w: { max: 560, aim: true }, e: { max: 220, escape: true }, r: { max: 1100, aim: true } },
-  firestaff: { pref: 380, reach: 630, q: { max: 740, aim: true }, w: { max: 660, ground: true }, e: { max: 160, escape: true }, r: { max: 690, ground: true } },
+  firestaff: { pref: 380, reach: 630, q: { max: 740, aim: true }, w: { max: 660, ground: true }, e: { max: 620, exec: true }, r: { max: 700, exec: true } },
   froststaff: { pref: 360, reach: 630, q: { max: 800, aim: true }, w: { max: 160 }, e: { max: 160, escape: true }, r: { max: 590, ground: true } },
-  spear: { pref: 120, reach: 150, q: { max: 330, aim: true }, w: { max: 150 }, e: { min: 100, max: 500, ground: true }, r: { min: 140, max: 860, aim: true } },
+  spear: { pref: 120, reach: 150, q: { max: 330, aim: true }, w: { max: 280 }, e: { min: 100, max: 500, ground: true }, r: { min: 150, max: 620, ground: true } },
 };
 
 const PROJ_SPEED = { longbow: 1200, firestaff: 820, froststaff: 880 };
@@ -176,9 +164,12 @@ function decide(game, p, b) {
     }
   }
 
-  const ramp = Math.min(1, Math.max(0, (game.time - 30) / 150));
-  const engage = (game.time < 30 ? 0 : 200 + ramp * 360) * (0.7 + b.aggro * 0.6);
-  if (enemy && (ed < engage || defending || enemy.orbs.length) && p.invulnT <= 0) {
+  const ramp = Math.min(1, Math.max(0, (game.time - 60) / 150));
+  const engage = (game.time < 60 ? 0 : 200 + ramp * 360) * (0.7 + b.aggro * 0.6);
+  // 이미 둘 이상이 노리는 상대에겐 끼어들지 않음 (한 명을 우르르 몰려가 잡는 것 방지)
+  let ganged = 0;
+  if (enemy) for (const q of game.players.values()) if (q !== p && q.isBot && q.alive && q.brain.mode === 'fight' && q.brain.target === enemy.id) ganged++;
+  if (enemy && (ed < engage || defending || enemy.orbs.length) && p.invulnT <= 0 && (ganged < 2 || defending || enemy.orbs.length)) {
     const courage = defending ? 0.85 + b.aggro * 0.5 : 0.55 + b.aggro * 0.6;
     const brave = power(p) * courage > power(enemy) || enemy.hp < enemy.maxHp * 0.25 || (enemy.orbs.length && hpR > 0.5);
     if (brave) {
@@ -324,7 +315,6 @@ function act(game, p, b, dt) {
         out.dashX = dx / d;
         out.dashY = dy / d;
       }
-      if (d < 250 && hpR < 0.5) useSpell(p, ['barrier', 'shadow', 'ghost']);
       const ai = AI[p.gear.weapon.type];
       if (ai.reach > 300 && d < ai.reach) out.atk = true;
     } else b.mode = 'wander';
@@ -362,9 +352,7 @@ function act(game, p, b, dt) {
   }
 
   // 기절·속박 → 정화
-  if ((p.st.stunT > 0 || p.st.rootT > 0) && rng() < 0.15 * b.skill + 0.05) useSpell(p, ['cleanse']);
   // 교전 중 방벽
-  if (b.mode === 'fight' && game.time - p.lastDmgT < 0.3 && hpR < 0.5) useSpell(p, ['barrier']);
 
   if (b.avoidT > 0) {
     b.avoidT -= dt;
@@ -415,7 +403,9 @@ function act(game, p, b, dt) {
   if (out.aim != null) inp.aim = out.aim;
   else if (ml > 0.001) inp.aim = Math.atan2(my, mx);
   inp.atk = out.atk;
-  // 회피/추격 이동기: 무기 E가 이동기면 우선, 아니면 점멸·질주
+  // 사람처럼 대상을 지정해 기본 공격 (롤식)
+  inp.at = out.atk && b.target ? b.target : out.atk && b.tid ? b.tid : 0;
+  // 회피/추격 이동기: 무기 E가 이동기일 때만
   if (out.dash) {
     const ex = WEAPONS[p.gear.weapon.type].e;
     const mobileE = ex.type === 'dashstrike' || ex.type === 'blinkskill' || ex.type === 'backflip';
@@ -424,10 +414,6 @@ function act(game, p, b, dt) {
       inp.cx = p.x + out.dashX * 250;
       inp.cy = p.y + out.dashY * 250;
       press(p, 'e');
-    } else if (b.skill > 0.5 || b.mode === 'flee') {
-      inp.cx = p.x + out.dashX * 260;
-      inp.cy = p.y + out.dashY * 260;
-      useSpell(p, ['flash', 'ghost']);
     }
   }
 }

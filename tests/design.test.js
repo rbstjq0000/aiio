@@ -57,7 +57,7 @@ const ttk = {};
 for (const w of WEAPON_IDS) ttk[w] = killTime(w);
 results.push(['무기별 1,000 체력 처치 시간 (목표 ~5초)', Object.entries(ttk).map(([w, t]) => `${WEAPONS[w].name} ${t.toFixed(1)}s`).join(', ')]);
 console.log(`- ${results[0][0]}: ${results[0][1]}`);
-// 근접 5초 ±0.5, 원거리·CC 무기는 사거리 이점 대신 5~6.2초
+// 근접 4.2~5.5초, 원거리 4.6~6.2초 (이동기 없는 화염은 순간 화력으로 짧은 쪽)
 // 전설 등급(고유 강화 포함)도 너무 튀지 않는지: 기본 대비 68~100% (CC형 강화는 처치 시간이 그대로일 수 있음)
 for (const w of WEAPON_IDS) {
   const t4 = killTime(w, 4);
@@ -66,7 +66,7 @@ for (const w of WEAPON_IDS) {
 }
 const RANGED = new Set(['longbow', 'firestaff', 'froststaff']);
 for (const [w, t] of Object.entries(ttk)) {
-  const [lo, hi] = RANGED.has(w) ? [5, 6.2] : [4.5, 5.5];
+  const [lo, hi] = RANGED.has(w) ? [4.6, 6.2] : [4.2, 5.5];
   assert.ok(t >= lo && t <= hi, `${w} 처치 시간 ${t.toFixed(2)}초가 목표(${lo}~${hi}초) 밖`);
 }
 

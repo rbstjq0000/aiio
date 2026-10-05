@@ -2,7 +2,7 @@
 // 규칙 근거: docs/COMBAT_DESIGN.md
 import { TAU, clamp, dist2, lerp, makeRng, shuffle, segPointDist2 } from './math.js';
 import * as C from './constants.js';
-import { WEAPONS, ARMORS, BOOTS, SPELLS, DEFAULT_SPELLS, RARITIES, ultGrade, WEAPON_IDS, ARMOR_IDS, BOOT_IDS, SLOT_KINDS, KIND_IDS, makeItem, rollItem, rollRarity, ORBS, runeResult } from './items.js';
+import { WEAPONS, ARMORS, BOOTS, RARITIES, ultGrade, WEAPON_IDS, ARMOR_IDS, BOOT_IDS, SLOT_KINDS, KIND_IDS, makeItem, rollItem, rollRarity, ORBS, runeResult } from './items.js';
 import { MONSTERS, MSTATE, updateMonster } from './monsters.js';
 import { MAPS, DEFAULT_MAP, CAMP_TYPES } from './maps.js';
 import { NavGrid } from './nav.js';
@@ -31,6 +31,8 @@ export const PF = {
   CHANNEL: 2048,
   EMPOWER: 4096,
   BURN: 8192,
+  MARK: 16384,
+  BLEED: 32768,
 };
 export const ALTAR_STATE = ['idle', 'warn', 'guarded', 'dropped', 'taken'];
 export const KIND_INDEX = { skill: 0, armor: 1, boots: 2 };
@@ -51,6 +53,8 @@ function makeStatus() {
     empT: 0,
     emp: null,
     burnT: 0,
+    bleed: null,
+    mark: null,
     shield: 0,
     shieldT: 0,
     slows: [],
@@ -83,12 +87,6 @@ export function sanitizeInput(raw, prev) {
   inp.ti = int(raw.ti, 0);
   inp.at = int(raw.at, 0); // 롤식 기본 공격 대상 (우클릭/A+클릭으로 고른 적)
   return inp;
-}
-
-export function sanitizeSpells(sp) {
-  const out = Array.isArray(sp) ? sp.filter((x) => SPELLS[x]).slice(0, 2) : [];
-  for (const d of [...DEFAULT_SPELLS, 'ghost', 'barrier']) if (out.length < 2 && !out.includes(d)) out.push(d);
-  return out;
 }
 
 export function encodeItem(it) {
@@ -133,7 +131,7 @@ export class Game {
   }
 
   // ---------------- 참가자 ----------------
-  addPlayer({ name = '영혼', isBot = false, weapon = 'greatsword', cosmetics = null, skill = 0.5, spells = null } = {}) {
+  addPlayer({ name = '영혼', isBot = false, weapon = 'greatsword', cosmetics = null, skill = 0.5 } = {}) {
     const id = this.nextId++;
     const w = WEAPONS[weapon] ? weapon : 'greatsword';
     const p = {
@@ -164,8 +162,7 @@ export class Game {
       xpNext: C.xpForLevel(1),
       gear: { weapon: makeItem('weapon', w, 0), armor: makeItem('armor', 'cloth', 0), boots: makeItem('boots', 'swift', 0) },
       grade: { q: 0, w: 0, e: 0 },
-      spells: sanitizeSpells(spells),
-      cd: { q: 0, w: 0, e: 0, d: 0, f: 0 },
+      cd: { q: 0, w: 0, e: 0 },
       cdMax: { q: 1, w: 1, e: 1, d: 1, f: 1 },
       wantAct: null,
       dr: 0,
@@ -230,7 +227,6 @@ export class Game {
         weapon: WEAPON_IDS[Math.floor(this.rng() * WEAPON_IDS.length)],
         cosmetics: randomCosmetics(this.rng),
         skill: clamp(base + this.rng.range(-0.18, 0.18), 0.05, 0.95),
-        spells: shuffle(Object.keys(SPELLS), this.rng).slice(0, 2),
       });
     }
   }
@@ -398,7 +394,7 @@ export class Game {
       p.comboT -= dt;
       if (p.comboT <= 0) p.combo = 0;
     }
-    for (const k of ['q', 'w', 'e', 'd', 'f']) if (p.cd[k] > 0) p.cd[k] -= dt;
+    for (const k of ['q', 'w', 'e']) if (p.cd[k] > 0) p.cd[k] -= dt;
     p.ult = Math.min(100, p.ult + C.ULT_PASSIVE * dt * (p.orbs.includes(2) ? 2 : 1));
     if (p.buffer) {
       p.buffer.t -= dt;
@@ -412,9 +408,6 @@ export class Game {
       }
       return false;
     };
-    // 이동기와 생존기는 다른 행동을 끊고 즉시 사용
-    if (pressed(PRESS.d)) this.trySpell(p, 'd');
-    if (pressed(PRESS.f)) this.trySpell(p, 'f');
     if (pressed(PRESS.act)) this.interact(p, inp.ti);
     if (p.wantAct) this.tryWantAct(p, dt);
     for (const key of ['q', 'w', 'e', 'r']) {
@@ -1041,6 +1034,8 @@ export class Game {
     if (p.channel) f |= PF.CHANNEL;
     if (p.st.empT > 0) f |= PF.EMPOWER;
     if (p.st.burnT > 0) f |= PF.BURN;
+    if (p.st.mark) f |= PF.MARK;
+    if (p.st.bleed) f |= PF.BLEED;
     return f;
   }
 
@@ -1197,8 +1192,8 @@ export class Game {
         lv: me.level,
         xp: Math.floor(me.xp),
         xn: me.xpNext,
-        cd: [me.cd.q, me.cd.w, me.cd.e, me.cd.d, me.cd.f].map((v) => Math.max(0, R(v * 100) / 100)),
-        cdm: [me.cdMax.q, me.cdMax.w, me.cdMax.e, me.cdMax.d, me.cdMax.f].map((v) => R(v * 100) / 100),
+        cd: [me.cd.q, me.cd.w, me.cd.e].map((v) => Math.max(0, R(v * 100) / 100)),
+        cdm: [me.cdMax.q, me.cdMax.w, me.cdMax.e].map((v) => R(v * 100) / 100),
         ult: R(me.ult),
         k: me.kills,
         d: me.deaths,
@@ -1216,7 +1211,6 @@ export class Game {
         m.ui = {
           v: me.uiVer,
           gear: { weapon: me.gear.weapon, armor: me.gear.armor, boots: me.gear.boots },
-          spells: me.spells,
           grade: { ...me.grade, r: ultGrade(me.grade) },
           speedMult: me.speedMult,
         };

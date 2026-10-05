@@ -30,7 +30,27 @@ export function updateMonster(game, m, dt) {
     if (m.st.stunT > 0) return;
   }
 
-  // 타겟 갱신 (0.4초마다)
+  // 롤 정글처럼: 끌려가다 자리에서 너무 멀어지면 집으로 돌아가며 체력을 회복 (그동안 무적)
+  if (m.resetting) {
+    const hx = m.homeX - m.x;
+    const hy = m.homeY - m.y;
+    const hd = Math.sqrt(hx * hx + hy * hy);
+    m.hp = Math.min(m.maxHp, m.hp + m.maxHp * 0.25 * dt);
+    if (hd < 30) {
+      m.resetting = false;
+      m.hp = m.maxHp;
+      m.invulnT = 0;
+    } else {
+      m.mx = hx / hd;
+      m.my = hy / hd;
+      m.moveSpeed = def.speed * 1.6;
+      m.state = MSTATE.move;
+      m.invulnT = 0.2;
+      return;
+    }
+  }
+
+  // 타겟 갱신 (0.4초마다). 정글 몬스터는 먼저 맞기 전엔 공격하지 않음 (수호자만 다가오면 공격)
   m.thinkT -= dt;
   if (m.thinkT <= 0) {
     m.thinkT = 0.4;
@@ -40,8 +60,9 @@ export function updateMonster(game, m, dt) {
     const leash = m.leash || def.leash || 900;
     if (tgt && (!tgt.alive || dist2(tgt.x, tgt.y, homeX, homeY) > (leash + 300) ** 2)) {
       m.target = null;
+      if (m.camp) m.resetting = true;
     }
-    if (!m.target) {
+    if (!m.target && m.type === 'guardian') {
       let best = null;
       let bestD = def.aggro * def.aggro;
       for (const p of game.players.values()) {
@@ -109,7 +130,12 @@ export function updateMonster(game, m, dt) {
     if (m.leash) {
       const hd2 = dist2(m.x, m.y, m.homeX, m.homeY);
       if (hd2 > m.leash * m.leash) {
-        if (hd2 > (m.leash + 200) ** 2) m.target = 0;
+        // 경계를 넘었는데 대상도 경계 밖이면 (롤처럼) 포기하고 돌아감
+        const tOut = dist2(tgt.x, tgt.y, m.homeX, m.homeY) > (m.leash + 60) ** 2;
+        if (hd2 > (m.leash + 200) ** 2 || (m.camp && tOut)) {
+          m.target = 0;
+          if (m.camp) m.resetting = true;
+        }
         const hx = m.homeX - m.x;
         const hy = m.homeY - m.y;
         const hd = Math.sqrt(hd2);
@@ -185,7 +211,7 @@ function performMonsterAttack(game, m, def, tgt) {
       if (d2 > reach * reach) continue;
       if (Math.abs(angleDiff(m.aim, Math.atan2(dy, dx))) > 1.2) continue;
       game.dealDamage(m, p, def.dmg * game.monsterDmgMult(), { kind: 'monster' });
-      game.knock(p, m.x, m.y, 220);
+      game.knock(p, m.x, m.y, 60);
     }
     game.emit({ e: 'mswing', id: m.id, x: m.x, y: m.y, a: m.aim });
   } else if (m.type === 'archer') {
@@ -199,7 +225,7 @@ function performMonsterAttack(game, m, def, tgt) {
       dmg: def.dmg * game.monsterDmgMult(),
       r: 8,
       pkind: 'bone',
-      knock: 120,
+      knock: 40,
     });
   }
   // brute/guardian은 slam 장판이 피해를 줌

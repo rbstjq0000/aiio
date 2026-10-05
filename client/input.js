@@ -1,11 +1,11 @@
 // 입력 (롤과 같은 방식)
 //   우클릭: 땅 = 이동(누르고 있으면 계속 따라감) / 적 = 그 적을 쫓아가며 기본 공격 / 상자·장비 = 가서 열기·줍기
 //   A + 좌클릭: 적 = 그 적 공격 / 빈 곳 = 근처 적 자동 공격(공격 이동)
-//   QWER 스킬(마우스 방향), DF 주문, S 멈춤
+//   QWER 스킬(마우스 방향), S 멈춤
 // 누름은 카운터로 보내서 틱 사이에 누른 것도 놓치지 않음
 import { PRESS, PRESS_N } from '../shared/constants.js';
 
-const KEYMAP = { KeyQ: 'q', KeyW: 'w', KeyE: 'e', KeyR: 'r', KeyD: 'd', KeyF: 'f' };
+const KEYMAP = { KeyQ: 'q', KeyW: 'w', KeyE: 'e', KeyR: 'r' };
 
 export class Input {
   constructor(canvas) {

@@ -1,4 +1,4 @@
-// 장비 데이터: 무기(좌클릭 + QWER) / 갑옷·신발(능력치) / 보조 주문(D·F). 수치는 docs/COMBAT_DESIGN.md 기준
+// 장비 데이터: 무기(기본 공격 + QWER) / 갑옷·신발(능력치). 수치는 docs/COMBAT_DESIGN.md 기준
 export const RARITIES = [
   { id: 'common', name: '일반', mult: 1.0, color: '#c9c9d6' },
   { id: 'uncommon', name: '고급', mult: 1.04, color: '#5fd35f' },
@@ -26,15 +26,15 @@ export const WEAPONS = {
     role: '근접 브루저',
     color: '#ff8a4d',
     range: 100,
-    hp: 1.25, // 근접은 붙기 전에 맞으니 체력이 더 많음 (롤의 근접 챔피언처럼)
+    hp: 1.12, // 근접은 붙기 전에 맞으니 체력이 더 많음 (롤의 근접 챔피언처럼)
     basic: {
       name: '베기',
       type: 'melee',
       moveMult: 0.35,
       comboWindow: 0.45,
       combo: [
-        { dmg: 64, range: 100, arc: 2.3, windup: 0.08, dur: 0.38, lunge: 35, knock: 80 },
-        { dmg: 64, range: 100, arc: 2.3, windup: 0.08, dur: 0.38, lunge: 35, knock: 80 },
+        { dmg: 62, range: 100, arc: 2.3, windup: 0.08, dur: 0.38, lunge: 35, knock: 80 },
+        { dmg: 62, range: 100, arc: 2.3, windup: 0.08, dur: 0.38, lunge: 35, knock: 80 },
         { dmg: 100, range: 112, arc: 2.9, windup: 0.13, dur: 0.55, lunge: 70, knock: 420 },
       ],
     },
@@ -53,7 +53,8 @@ export const WEAPONS = {
       hint: '앞쪽 부채꼴의 적을 내 앞으로 끌어당김',
       up: { 3: { range: 400, upDesc: '사거리 +80' }, 4: { stun: 0.4, upDesc: '끌려온 적 0.4초 기절' } },
     },
-    r: { name: '대지 가르기', icon: '⛰', type: 'line', windup: 0.5, len: 560, width: 96, dmg: 320, stun: 1.0, dur: 0.75, moveMult: 0, hint: '0.5초 뒤 앞으로 땅을 가르는 충격파, 기절' },
+    r: { name: '단두대', icon: '🪓', type: 'execute', range: 460, dmg: 220, missing: 0, bleedBonus: 0.2, ultRefund: 100, trueDmg: true, hint: '적에게 뛰어올라 내리찍음. 출혈 중첩당 피해 +20%, 처치하면 즉시 다시 사용 가능' },
+    passive: { name: '출혈', desc: '기본 공격과 스킬이 출혈을 쌓음 (최대 5중첩, 중첩당 초당 6 피해, 5초)', bleed: { per: 6, t: 5, max: 5 } },
   },
   daggers: {
     id: 'daggers',
@@ -62,8 +63,8 @@ export const WEAPONS = {
     role: '암살자',
     color: '#b28cff',
     range: 78,
-    hp: 1.08,
-    speed: 1.06,
+    hp: 1.05,
+    speed: 1.08,
     basic: {
       name: '연속 찌르기',
       type: 'melee',
@@ -75,21 +76,22 @@ export const WEAPONS = {
       ],
     },
     q: {
-      name: '수리검', icon: '✴', type: 'proj', windup: 0.08, dur: 0.22, speed: 1400, range: 720, dmg: 105, r: 10, pierce: 99, cd: 6,
-      hint: '일직선으로 꿰뚫는 수리검',
-      up: { 3: { fan: 3, spread: 0.32, upDesc: '수리검 3개를 부채꼴로' }, 4: { refund: { e: 2 }, upDesc: '적중 시 순보 쿨타임 2초 감소' } },
+      name: '면도날 수리검', icon: '✴', type: 'proj', windup: 0.08, dur: 0.22, speed: 1400, range: 820, dmg: 130, r: 10, pierce: 99, fromShadows: true, cd: 6,
+      hint: '나와 그림자들이 동시에 커서 쪽으로 관통 수리검을 던짐',
+      up: { 3: { dmg: 150, upDesc: '피해 증가' }, 4: { cd: 4.5, upDesc: '쿨타임 4.5초' } },
     },
     w: {
-      name: '독 단검', icon: '🧪', type: 'proj', windup: 0.1, dur: 0.25, speed: 950, range: 620, dmg: 75, r: 9, dot: { dmg: 130, t: 4 }, slow: { amt: 0.25, t: 3 }, cd: 8,
-      hint: '맞으면 4초 동안 중독되고 느려짐',
-      up: { 3: { slow: { amt: 0.4, t: 3 }, upDesc: '둔화 40%' }, 4: { dot: { dmg: 240, t: 4 }, upDesc: '독 피해 거의 2배' } },
+      name: '살아있는 그림자', icon: '👤', type: 'shadow', range: 650, t: 5, cd: 16,
+      hint: '그림자를 보냄. 그림자도 Q·E를 따라 씀. 5초 안에 W를 다시 누르면 그림자와 자리를 바꿈',
+      up: { 3: { range: 760, upDesc: '사거리 +110' }, 4: { cd: 12, upDesc: '쿨타임 12초' } },
     },
     e: {
-      name: '순보', icon: '💨', type: 'blinkskill', range: 420, land: { r: 120, dmg: 70 }, cd: 9,
-      hint: '지정 위치로 순간이동, 도착 지점 주변에 피해',
-      up: { 3: { land: { r: 140, dmg: 90, slow: { amt: 0.3, t: 1.2 } }, upDesc: '도착 피해 증가 + 둔화' }, 4: { refundHit: 0.6, upDesc: '도착 피해가 적중하면 쿨타임 60% 돌려받음' } },
+      name: '그림자 베기', icon: '🌀', type: 'nova', windup: 0.05, dur: 0.2, r: 165, dmg: 100, fromShadows: true, shadowSlow: { amt: 0.35, t: 1.5 }, hitRefund: { w: 2 }, moveMult: 1, cd: 4.5,
+      hint: '나와 그림자 주변을 벰. 그림자에 맞으면 둔화, 적중할 때마다 W 쿨타임 2초 감소',
+      up: { 3: { r: 195, upDesc: '범위 확대' }, 4: { dmg: 125, hitRefund: { w: 3 }, upDesc: '피해 증가 + W 쿨 감소 3초' } },
     },
-    r: { name: '처형', icon: '☠', type: 'execute', range: 380, dmg: 170, missing: 0.3, threshold: 0.18, ultRefund: 60, hint: '근처 적 등 뒤로 이동해 처형. 체력 18% 이하가 되면 즉사, 처치 시 궁 게이지 60% 반환' },
+    r: { name: '죽음의 표식', icon: '☠', type: 'mark', range: 520, dmg: 80, markT: 3, markPct: 0.6, t: 6, hint: '적 뒤로 순간이동(잠깐 무적)하고 표식. 3초 뒤 그동안 준 피해의 60%가 한 번 더 터짐. 원래 자리에 그림자가 남아 R로 돌아갈 수 있음' },
+    passive: { name: '약자 멸시', desc: '체력 50% 미만인 적을 기본 공격하면 최대 체력의 8% 추가 피해 (대상마다 8초에 한 번)', lowHp: 0.5, pct: 0.08, cd: 8 },
   },
   longbow: {
     id: 'longbow',
@@ -98,11 +100,11 @@ export const WEAPONS = {
     role: '원거리 딜러',
     color: '#8cff6b',
     range: 760,
-    basic: { name: '사격', type: 'proj', windup: 0.1, dur: 0.5, moveMult: 0.85, speed: 1200, range: 760, dmg: 70, r: 7, knock: 60 },
+    basic: { name: '사격', type: 'proj', windup: 0.1, dur: 0.5, moveMult: 0.85, speed: 1200, range: 760, dmg: 76, r: 7, knock: 60 },
     q: {
-      name: '신비한 화살', icon: '➶', type: 'proj', windup: 0.12, dur: 0.3, speed: 1750, range: 950, dmg: 130, r: 9, refundAll: 1, cd: 5,
+      name: '신비한 화살', icon: '➶', type: 'proj', windup: 0.12, dur: 0.3, speed: 1750, range: 950, dmg: 150, r: 9, refundAll: 1, cd: 5,
       hint: '빠르고 가는 화살. 맞히면 모든 스킬 쿨타임 1초 감소',
-      up: { 3: { slow: { amt: 0.25, t: 1.5 }, dmg: 150, upDesc: '피해 증가 + 둔화' }, 4: { pierce: 1, upDesc: '첫 적을 꿰뚫고 하나 더 맞힘' } },
+      up: { 3: { slow: { amt: 0.25, t: 1.5 }, dmg: 170, upDesc: '피해 증가 + 둔화' }, 4: { pierce: 1, upDesc: '첫 적을 꿰뚫고 하나 더 맞힘' } },
     },
     w: {
       name: '일제 사격', icon: '🎯', type: 'fan', windup: 0.12, dur: 0.3, count: 7, spread: 0.9, speed: 1100, range: 620, dmg: 45, r: 7, slow: { amt: 0.25, t: 1.5 }, cd: 8,
@@ -123,23 +125,23 @@ export const WEAPONS = {
     role: '광역 마법사',
     color: '#ff5a1f',
     range: 650,
-    basic: { name: '불씨', type: 'proj', windup: 0.12, dur: 0.55, moveMult: 0.75, speed: 820, range: 650, dmg: 67, r: 10, dot: { dmg: 35, t: 2 }, knock: 40 },
+    basic: { name: '불씨', type: 'proj', windup: 0.12, dur: 0.55, moveMult: 0.75, speed: 820, range: 650, dmg: 62, r: 10, dot: { dmg: 35, t: 2 }, knock: 40 },
     q: {
       name: '화염구', icon: '☄', type: 'proj', windup: 0.15, dur: 0.3, speed: 1100, range: 780, dmg: 130, r: 13, dot: { dmg: 50, t: 2 }, burnStun: 0.8, cd: 7,
       hint: '이미 불타는 적이 맞으면 0.8초 기절 (먼저 다른 불로 지져 놓기)',
       up: { 3: { dot: { dmg: 80, t: 3 }, upDesc: '화상 강화' }, 4: { burnStun: 1.0, splash: 110, upDesc: '기절 1초 + 주변 폭발' } },
     },
     w: {
-      name: '불기둥', icon: '🔥', type: 'ground', range: 680, r: 120, delay: 0.65, ticks: 1, dmg: 170, dot: { dmg: 40, t: 2 }, burnBonus: 0.3, cd: 9, dur: 0.25,
+      name: '불기둥', icon: '🔥', type: 'ground', range: 680, r: 120, delay: 0.65, ticks: 1, dmg: 170, dot: { dmg: 40, t: 2 }, burnBonus: 0.3, cd: 7.5, dur: 0.25,
       hint: '0.65초 뒤 불기둥. 불타는 적에게 30% 추가 피해',
-      up: { 3: { r: 150, upDesc: '범위 확대' }, 4: { burnBonus: 0.6, upDesc: '불타는 적 추가 피해 60%' } },
+      up: { 3: { r: 150, upDesc: '범위 확대' }, 4: { burnBonus: 0.45, upDesc: '불타는 적 추가 피해 45%' } },
     },
     e: {
-      name: '화염 도약', icon: '🦅', type: 'blinkskill', range: 300, burn: { r: 80, t: 2, every: 0.5, dmg: 30 }, cd: 11,
-      hint: '순간이동, 출발 지점에 불바닥',
-      up: { 3: { range: 380, upDesc: '거리 +80' }, 4: { land: { r: 130, dmg: 60 }, upDesc: '도착 지점에 폭발' } },
+      name: '화염 확산', icon: '💢', type: 'conflag', range: 620, dmg: 95, dot: { dmg: 40, t: 2 }, spread: 300, cd: 8,
+      hint: '커서 근처 적을 바로 태움. 이미 불타던 적이면 주변 적에게도 번짐',
+      up: { 3: { dmg: 125, upDesc: '피해 증가' }, 4: { spread: 420, cd: 7.5, upDesc: '번지는 범위 확대 + 쿨타임 7.5초' } },
     },
-    r: { name: '운석', icon: '🌋', type: 'ground', range: 720, r: 190, delay: 1.0, ticks: 1, dmg: 420, after: { t: 3, every: 0.5, dmg: 45 }, dur: 0.3, hint: '1초 뒤 큰 운석, 불바닥이 남음' },
+    r: { name: '불길의 폭주', icon: '🌋', type: 'bounce', range: 700, dmg: 130, bounces: 5, bounceR: 520, dot: { dmg: 40, t: 2 }, hint: '적에게 불덩이를 던짐. 주변 적 사이를 5번 튕김 (적이 하나면 그 적에게 계속 돌아옴)' },
   },
   froststaff: {
     id: 'froststaff',
@@ -148,14 +150,14 @@ export const WEAPONS = {
     role: '군중 제어',
     color: '#8fe3ff',
     range: 650,
-    basic: { name: '얼음 화살', type: 'proj', windup: 0.1, dur: 0.5, moveMult: 0.75, speed: 880, range: 650, dmg: 86, r: 9, chill: 0.06, knock: 30 },
+    basic: { name: '얼음 화살', type: 'proj', windup: 0.1, dur: 0.5, moveMult: 0.75, speed: 880, range: 650, dmg: 86, r: 9, chill: 0.04, knock: 30 },
     q: {
-      name: '서리 속박', icon: '⛓', type: 'proj', windup: 0.2, dur: 0.4, speed: 1150, range: 850, dmg: 170, r: 14, root: 0.8, cd: 8,
-      hint: '첫 적중 대상을 0.8초 속박',
+      name: '서리 속박', icon: '⛓', type: 'proj', windup: 0.2, dur: 0.4, speed: 1150, range: 850, dmg: 170, r: 14, root: 0.75, cd: 8,
+      hint: '첫 적중 대상을 0.75초 속박',
       up: { 3: { range: 1000, r: 18, upDesc: '사거리·폭 증가' }, 4: { pierce: 1, rootAll: true, upDesc: '두 명까지 꿰뚫고 모두 속박' } },
     },
     w: {
-      name: '서리 고리', icon: '❅', type: 'ring', delay: 0.4, r: 170, dmg: 130, root: 0.6, cd: 11, dur: 0.35, moveMult: 0.3,
+      name: '서리 고리', icon: '❅', type: 'ring', delay: 0.4, r: 170, dmg: 120, root: 0.5, cd: 11, dur: 0.35, moveMult: 0.3,
       hint: '0.4초 뒤 내 주변 적 속박',
       up: { 3: { r: 210, upDesc: '범위 확대' }, 4: { shieldSelf: 160, upDesc: '시전 시 보호막 160' } },
     },
@@ -173,7 +175,7 @@ export const WEAPONS = {
     role: '돌격',
     color: '#ffe066',
     range: 150,
-    hp: 1.18,
+    hp: 1.1,
     speed: 1.03,
     basic: {
       name: '찌르기',
@@ -188,16 +190,16 @@ export const WEAPONS = {
       up: { 3: { len: 400, upDesc: '사거리 +60' }, 4: { dmg: 190, slow: { amt: 0.3, t: 1.5 }, upDesc: '피해 증가 + 둔화' } },
     },
     w: {
-      name: '휩쓸기', icon: '🌪', type: 'nova', windup: 0.1, dur: 0.32, r: 150, dmg: 110, knock: 420, cd: 8, moveMult: 0.4,
-      hint: '주변을 휩쓸어 밀쳐냄. 벽에 박으면 기절',
-      up: { 3: { r: 190, upDesc: '범위 확대' }, 4: { shieldSelf: 150, upDesc: '보호막 150' } },
+      name: '황금 방패', icon: '🛡', type: 'aegis', r: 300, shield: 140, perEnemy: 40, slow: { amt: 0.3, t: 1.5 }, cd: 9,
+      hint: '보호막을 얻고 주변 적을 둔화. 주변 적이 많을수록 보호막이 커짐',
+      up: { 3: { shield: 190, upDesc: '보호막 증가' }, 4: { cd: 6.5, upDesc: '쿨타임 6.5초' } },
     },
     e: {
       name: '군기', icon: '🚩', type: 'flag', range: 520, r: 90, dmg: 80, t: 6, cd: 10,
       hint: '깃발을 던져 꽂음(6초). Q로 깃발까지 돌진 가능',
       up: { 3: { slow: { amt: 0.4, t: 1.5 }, upDesc: '깃발 꽂힌 곳 둔화' }, 4: { cd: 6, upDesc: '쿨타임 6초' } },
     },
-    r: { name: '투창', icon: '🔱', type: 'proj', windup: 0.3, dur: 0.45, moveMult: 0.3, speed: 1350, range: 900, dmg: 330, r: 13, root: 1.0, knock: 150, hint: '0.3초 준비 후 투창, 첫 적중 1초 속박' },
+    r: { name: '격투장', icon: '⛓', type: 'arena', range: 620, air: 0.35, r: 140, dmg: 240, arenaR: 310, t: 3.5, hint: '지점으로 뛰어들어 착지 피해, 주변에 벽을 세워 3.5초 동안 안에 있는 적이 못 나가게 가둠' },
   },
 };
 export const WEAPON_IDS = Object.keys(WEAPONS);
@@ -250,7 +252,7 @@ export function skillDesc(sk, isBasic = false) {
     case 'nova':
       return `주변 반경 ${sk.r}에 ${sk.dmg}${sk.knock ? ' + 넉백' : ''}${extra(sk)}`;
     case 'execute':
-      return `${sk.range} 안의 적 등 뒤로 순간이동, ${sk.dmg} + 잃은 체력의 ${pct(sk.missing)}${sk.threshold ? `, 체력 ${pct(sk.threshold)} 이하면 즉사` : ''}`;
+      return `${sk.range} 안의 적에게 순간이동, ${sk.dmg}${sk.missing ? ` + 잃은 체력의 ${pct(sk.missing)}` : ''}${sk.bleedBonus ? ` (출혈 중첩당 +${pct(sk.bleedBonus)}, 고정 피해)` : ''}${sk.threshold ? `, 체력 ${pct(sk.threshold)} 이하면 즉사` : ''}${sk.ultRefund >= 100 ? ', 처치 시 재사용' : ''}`;
     case 'fan':
       return `${sk.count}발 부채꼴 사격, 발당 ${sk.dmg}${extra(sk)}, 사거리 ${sk.range}`;
     case 'blinkskill':
@@ -261,6 +263,18 @@ export function skillDesc(sk, isBasic = false) {
       return `앞 부채꼴(${sk.range}) ${sk.dmg} + 끌어당김${extra(sk)}`;
     case 'flag':
       return `깃발 투척(${sk.range}) ${sk.dmg}, ${sk.t}초 유지${extra(sk)}`;
+    case 'shadow':
+      return `최대 ${sk.range}에 그림자 (${sk.t}초), 다시 누르면 자리 바꿈`;
+    case 'mark':
+      return `${sk.range} 안의 적 뒤로 순간이동, ${sk.dmg} + ${sk.markT}초 뒤 그동안 준 피해의 ${pct(sk.markPct)}`;
+    case 'conflag':
+      return `${sk.range} 안 적에게 ${sk.dmg}${extra(sk)}, 불타던 적이면 반경 ${sk.spread}로 번짐`;
+    case 'bounce':
+      return `${sk.dmg} 불덩이, 반경 ${sk.bounceR} 안에서 ${sk.bounces}번 튕김${extra(sk)}`;
+    case 'aegis':
+      return `보호막 ${sk.shield} + 주변 적 하나당 ${sk.perEnemy}, 반경 ${sk.r} 둔화 ${pct(sk.slow.amt)}`;
+    case 'arena':
+      return `최대 ${sk.range} 도약, 착지 ${sk.dmg} + 반경 ${sk.arenaR} 격투장 ${sk.t}초`;
     case 'backflip':
       return `뒤로 ${sk.dist} 도약 + 화살 ${sk.proj.dmg}${extra(sk.proj)}`;
     default:
@@ -289,16 +303,6 @@ export const BOOTS = {
 };
 export const BOOT_IDS = Object.keys(BOOTS);
 
-// 보조 주문 (롤의 소환사 주문): 대기실에서 2개 선택, D·F
-export const SPELLS = {
-  flash: { id: 'flash', name: '점멸', icon: '✦', type: 'blink', dist: 260, cd: 22, desc: '마우스 방향으로 즉시 260 순간이동' },
-  ghost: { id: 'ghost', name: '질주', icon: '»', type: 'sprint', t: 2.5, speed: 0.5, cd: 20, desc: '2.5초간 이동 +50%, 둔화 해제' },
-  cleanse: { id: 'cleanse', name: '정화', icon: '◇', type: 'purify', immune: 1.5, shield: 150, cd: 20, desc: 'CC 해제 + 1.5초 CC 면역 + 보호막 150' },
-  barrier: { id: 'barrier', name: '방벽', icon: '⬡', type: 'bulwark', t: 2, dr: 0.5, cd: 22, desc: '2초간 받는 피해 -50%, 넉백 면역' },
-  shadow: { id: 'shadow', name: '은신', icon: '◐', type: 'shadow', t: 2, speed: 0.25, cd: 24, desc: '2초 은신 + 이동 +25% (공격하면 풀림)' },
-};
-export const SPELL_IDS = Object.keys(SPELLS);
-export const DEFAULT_SPELLS = ['flash', 'cleanse'];
 
 // 스킬 각인: 상자에서 나오며 내 직업의 Q/W/E 스킬 등급을 올림 (무기 자체는 판 중에 바뀌지 않음)
 export const SKILL_RUNES = {

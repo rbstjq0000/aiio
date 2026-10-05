@@ -28,7 +28,7 @@ export const ZONE_DPS = 0.05; // 초당 최대체력 비율
 
 // 플레이어
 export const PLAYER_R = 18;
-export const BASE_HP = 1000;
+export const BASE_HP = 1400; // 1:1 다 맞아도 약 7초 (롤 초반 교전처럼 판단할 시간이 있게)
 export const BASE_SPEED = 250;
 export const LEVEL_MAX = 15;
 export const LEVEL_BONUS = 0.015; // 레벨당 체력·피해 (15레벨 = ×1.21)
