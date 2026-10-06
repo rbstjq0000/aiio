@@ -162,7 +162,7 @@ export class Game {
       xpNext: C.xpForLevel(1),
       gear: { weapon: makeItem('weapon', w, 0), armor: makeItem('armor', 'cloth', 0), boots: makeItem('boots', 'swift', 0) },
       grade: { q: 0, w: 0, e: 0 },
-      cd: { q: 0, w: 0, e: 0 },
+      cd: { q: 0, w: 0, e: 0, d: 0 },
       cdMax: { q: 1, w: 1, e: 1, d: 1, f: 1 },
       wantAct: null,
       dr: 0,
@@ -394,7 +394,7 @@ export class Game {
       p.comboT -= dt;
       if (p.comboT <= 0) p.combo = 0;
     }
-    for (const k of ['q', 'w', 'e']) if (p.cd[k] > 0) p.cd[k] -= dt;
+    for (const k of ['q', 'w', 'e', 'd']) if (p.cd[k] > 0) p.cd[k] -= dt;
     p.ult = Math.min(100, p.ult + C.ULT_PASSIVE * dt * (p.orbs.includes(2) ? 2 : 1));
     if (p.buffer) {
       p.buffer.t -= dt;
@@ -408,6 +408,7 @@ export class Game {
       }
       return false;
     };
+    if (pressed(PRESS.d)) this.tryRoll(p);
     if (pressed(PRESS.act)) this.interact(p, inp.ti);
     if (p.wantAct) this.tryWantAct(p, dt);
     for (const key of ['q', 'w', 'e', 'r']) {
@@ -1192,8 +1193,8 @@ export class Game {
         lv: me.level,
         xp: Math.floor(me.xp),
         xn: me.xpNext,
-        cd: [me.cd.q, me.cd.w, me.cd.e].map((v) => Math.max(0, R(v * 100) / 100)),
-        cdm: [me.cdMax.q, me.cdMax.w, me.cdMax.e].map((v) => R(v * 100) / 100),
+        cd: [me.cd.q, me.cd.w, me.cd.e, me.cd.d].map((v) => Math.max(0, R(v * 100) / 100)),
+        cdm: [me.cdMax.q, me.cdMax.w, me.cdMax.e, C.ROLL.cd].map((v) => R(v * 100) / 100),
         ult: R(me.ult),
         k: me.kills,
         d: me.deaths,

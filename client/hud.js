@@ -10,6 +10,7 @@ const SLOTS = [
   { k: 'w', key: 'W' },
   { k: 'e', key: 'E' },
   { k: 'r', key: 'R' },
+  { k: 'd', key: 'D', spell: true },
 ];
 
 function fmtTime(s) {
@@ -80,6 +81,8 @@ export class Hud {
       }
       set(k, w[k].icon || k.toUpperCase(), w[k].name, `<em>${w[k].hint || ''}</em>${sk.desc} · ${Math.round(sk.cd * GRADE_CD[g[k]] * 10) / 10}초`, w.color, g[k], up);
     }
+    set('d', '⤳', '구르기', `커서 방향으로 ${C.ROLL.dist} 굴러 피함. ${C.ROLL.iframe}초 무적 · ${C.ROLL.cd}초`, '#9fe8ff');
+    if (w.passive) this.slotEls.basic.querySelector('.slot-tip span').innerHTML += `<i class="tip-up got" style="--rc:${w.color}">패시브 ${w.passive.name}: ${w.passive.desc}</i>`;
     set('r', w.r.icon || '★', w.r.name, `<em>${w.r.hint || ''}</em>${w.r.desc}${g.r ? '' : '<i class="tip-up">Q·W·E가 모두 희귀 이상이면 R도 등급 상승(세트 효과)</i>'}`, '#ffd45a', g.r);
     const gear = $('gear');
     gear.innerHTML = '';
@@ -104,7 +107,7 @@ export class Hud {
       this.refreshGear(game.ui);
     }
     // 매 프레임: 쿨타임 오버레이 (부드럽게)
-    const cds = { q: [me.cd[0], me.cdm[0]], w: [me.cd[1], me.cdm[1]], e: [me.cd[2], me.cdm[2]] };
+    const cds = { q: [me.cd[0], me.cdm[0]], w: [me.cd[1], me.cdm[1]], e: [me.cd[2], me.cdm[2]], d: [me.cd[3], me.cdm[3]] };
     for (const [k, [cd, max]] of Object.entries(cds)) {
       const el = this.slotEls[k];
       const frac = cd > 0 && max > 0 ? cd / max : 0;

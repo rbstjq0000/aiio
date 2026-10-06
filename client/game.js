@@ -4,6 +4,8 @@ import { stepBody, startDash, resolveStatic } from '../shared/physics.js';
 import { NavGrid } from '../shared/nav.js';
 
 const NAV_CACHE = new Map();
+// 대상을 찍어 쓰는 스킬 (사거리 밖이면 걸어가서 사용)
+const TARGETED = new Set(['execute', 'mark', 'conflag', 'bounce']);
 const ATTACK_CURSOR = `url("data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28"><path d="M3 3 L17 17 M17 13 L13 17 M15 19 L19 15 M18 18 L24 24" stroke="#ff3d4f" stroke-width="3" stroke-linecap="round"/><path d="M3 3 L17 17" stroke="#fff" stroke-width="1"/></svg>')}") 3 3, crosshair`;
 import { WEAPONS, ARMORS, BOOTS, RARITIES, ORBS, WEAPON_IDS, ARMOR_IDS, BOOT_IDS, KIND_IDS, SLOT_KINDS, itemDef } from '../shared/items.js';
 import { MONSTER_TYPES } from '../shared/monsters.js';
@@ -205,7 +207,7 @@ export class GameClient {
     const base = { x: me.x, y: me.y, r: C.PLAYER_R, kbx: me.kbx, kby: me.kby, dashT: me.dt, dashSpd: me.ds, ddx: me.ddx, ddy: me.ddy };
     while (this.hist.length && this.hist[0].seq <= me.ack) this.hist.shift();
     for (const h of this.hist) {
-      if (h.sp) this.applyBlink(base, h.sp);
+      if (h.sp && h.sp.roll) startDash(base, h.sp.roll[0], h.sp.roll[1], C.ROLL.time, C.ROLL.dist);
       stepBody(base, h.mx, h.my, h.speed, C.DT, this.map.obstacles, this.map.R);
     }
     if (this.pred) {
@@ -303,6 +305,7 @@ export class GameClient {
     const [wx, wy] = this.mouseWorld(sx, sy);
     const s = this.latest;
     this.atkMove = false;
+    this.pendingCast = null;
     const foe = this.enemyAt(wx, wy);
     if (foe) {
       this.atkTarget = foe.id;
@@ -367,13 +370,37 @@ export class GameClient {
   }
 
   // 스킬 키: 이동 예측에 스킬 시전 중 감속을 반영 (서버와 어긋나 튀는 것 방지)
+  // 스킬 키 처리 (롤처럼):
+  //  - 대상 지정 스킬(처형·표식·화염 확산 등)은 커서 근처 적이 사거리 밖이면 걸어가서 닿는 순간 사용
+  //  - 다음 기본 공격 강화(결정타)는 커서 근처 적을 자동으로 공격 대상으로 잡음
+  //  - 시전 중 감속을 이동 예측에 반영 (서버와 어긋나 튀는 것 방지)
   onKeyPress(k) {
-    if (!this.ui || !this.me) return;
+    if (!this.ui || !this.me) return true;
     const i = { q: 0, w: 1, e: 2 }[k];
-    if (i == null && k !== 'r') return;
-    if (i != null && this.me.cd[i] > 0) return;
+    if (i == null && k !== 'r') return true;
+    if (i != null && this.me.cd[i] > 0) return true;
+    if (k === 'r' && this.me.ult < 100) return true;
     const sk = WEAPONS[this.ui.gear.weapon.type][k];
+    const [wx, wy] = this.mouseWorld();
+    const px = this.pred ? this.pred.x : this.me.x;
+    const py = this.pred ? this.pred.y : this.me.y;
+    if (TARGETED.has(sk.type)) {
+      const foe = this.enemyAt(wx, wy, 60) || this.nearestEnemy(wx, wy, 220);
+      if (foe && Math.hypot(foe.x - px, foe.y - py) > sk.range + foe.r - 10) {
+        this.pendingCast = { key: k, id: foe.id, range: sk.range, t: 3 };
+        this.atkTarget = 0;
+        this.setDest(foe.x, foe.y);
+        this.moveMarker = { x: foe.x, y: foe.y, t: 0, attack: true };
+        return false;
+      }
+      if (foe) this.castAt = [foe.x, foe.y];
+    }
+    if (sk.type === 'empower' && !this.atkTarget) {
+      const foe = this.enemyAt(wx, wy, 60) || this.nearestEnemy(px, py, this.myRange() + 260);
+      if (foe) this.atkTarget = foe.id;
+    }
     if (sk.moveMult != null && sk.dur) this.predAct = { t: sk.dur, mult: sk.moveMult };
+    return true;
   }
 
   // 이동 목적지: 벽이 가로막으면 길찾기로 돌아가는 경로를 만듦 (롤처럼)
@@ -416,9 +443,29 @@ export class GameClient {
     if (this.input.stopPressed) {
       this.moveTarget = null;
       this.path = null;
+      this.pendingCast = null;
       this.atkTarget = 0;
       this.atkMove = false;
       this.input.stopPressed = false;
+    }
+    // 걸어가서 쓰는 대상 스킬: 사거리에 들어오면 그 자리에서 시전
+    let castAt = this.castAt || null;
+    this.castAt = null;
+    if (this.pendingCast) {
+      const pc = this.pendingCast;
+      const t = this.entity(pc.id);
+      pc.t -= C.DT;
+      if (!t || pc.t <= 0) this.pendingCast = null;
+      else if (Math.hypot(t.x - px, t.y - py) <= pc.range + t.r - 10) {
+        this.input.counters[C.PRESS[pc.key]]++;
+        castAt = [t.x, t.y];
+        this.pendingCast = null;
+        this.moveTarget = null;
+        this.path = null;
+      } else if ((this.chaseT || 0) <= 0) {
+        this.setDest(t.x, t.y);
+        this.chaseT = 0.12;
+      }
     }
     // 롤식 기본 공격: 대상이 사거리 밖이면 쫓아가고, 안이면 멈춰서 계속 공격
     let atk = false;
@@ -482,7 +529,7 @@ export class GameClient {
     this.aim = tgt ? Math.atan2(tgt.y - py, tgt.x - px) : aim;
     this.seq++;
     const p = this.input.counters.slice();
-    this.t.send({ t: 'in', s: this.seq, mx: Math.round(mx * 1000) / 1000, my: Math.round(my * 1000) / 1000, a: Math.round(aim * 1000) / 1000, k: atk, at: this.atkTarget, cx: Math.round(wx), cy: Math.round(wy), ti: this.interactTarget, p });
+    this.t.send({ t: 'in', s: this.seq, mx: Math.round(mx * 1000) / 1000, my: Math.round(my * 1000) / 1000, a: Math.round(aim * 1000) / 1000, k: atk, at: this.atkTarget, cx: Math.round(castAt ? castAt[0] : wx), cy: Math.round(castAt ? castAt[1] : wy), ti: this.interactTarget, p });
     if (!me || !me.al || !this.pred || !this.ui) return;
     let speed = me.ms;
     const w = WEAPONS[this.ui.gear.weapon.type];
@@ -493,7 +540,19 @@ export class GameClient {
       if (this.predAct.t <= 0) this.predAct = null;
     }
     if (me.chn >= 0) speed = 0;
-    const sp = null;
+    // D 구르기 즉시 예측
+    let sp = null;
+    if (p[C.PRESS.d] > (this.lastRoll || 0)) {
+      this.lastRoll = p[C.PRESS.d];
+      if (me.cd[3] <= 0 && me.st === 0) {
+        let dx = wx - this.pred.x;
+        let dy = wy - this.pred.y;
+        const len = Math.hypot(dx, dy) || 1;
+        sp = { roll: [dx / len, dy / len] };
+        startDash(this.pred, dx / len, dy / len, C.ROLL.time, C.ROLL.dist);
+        this.predAct = null;
+      }
+    }
     stepBody(this.pred, mx, my, speed, C.DT, this.map.obstacles, this.map.R);
     this.hist.push({ seq: this.seq, mx, my, speed, sp });
     if (this.hist.length > 90) this.hist.shift();
@@ -707,7 +766,7 @@ export class GameClient {
         R.hitFlash(e.id);
         const src = e.s ? this.findPlayer(e.s) || (this.latest && this.latest.mo.get(e.s)) : null;
         if (src) R.recoil(e.id, e.x - src.x, e.y - src.y, e.b ? 12 : 7);
-        if ((e.s === this.meId || e.id === this.meId) && e.k !== 3 && e.k !== 6) this.hitstop = Math.max(this.hitstop, e.b ? 0.09 : e.a >= 100 ? 0.06 : 0.04);
+        if ((e.s === this.meId || e.id === this.meId) && e.k !== 3 && e.k !== 6) this.hitstop = Math.max(this.hitstop, e.b ? 0.1 : e.a >= 100 ? 0.07 : 0.05);
         const toMe = e.id === this.meId;
         const byMe = e.s === this.meId;
         let color = '#d8d8e0';
@@ -719,14 +778,23 @@ export class GameClient {
           color = e.k === 2 ? '#ffd45a' : e.k === 1 ? '#ffb070' : e.k === 3 ? '#c99bff' : '#ffffff';
           size = e.b ? 26 : e.k === 3 ? 13 : 17;
         } else if (e.k === 3) size = 11;
-        if (toMe || byMe || e.a >= 40) R.text(e.x, e.y - 24, String(e.a), color, size, e.b ? 1.1 : 0.75);
+        // 피해 숫자는 이름표 위로 띄움 (이름표와 겹치지 않게)
+        if (toMe || byMe || e.a >= 40) R.text(e.x + (byMe ? 16 : -16), e.y - 52, String(e.a), color, size, e.b ? 1.1 : 0.75);
+        // 내가 때린 타격: 맞은 자리에 충격 고리 + 맞은 방향으로 튀는 파편
+        if (byMe && e.k !== 3 && e.k !== 6) {
+          R.ring(e.x, e.y, 6, e.b ? 46 : 30, e.k === 2 ? '#ffd45a' : '#ffffff', e.b ? 0.22 : 0.14, e.b ? 6 : 4);
+          if (src) {
+            const ang = Math.atan2(e.y - src.y, e.x - src.x);
+            for (let i = 0; i < (e.b ? 10 : 5); i++) R.burst(e.x + Math.cos(ang) * 10, e.y + Math.sin(ang) * 10, i % 2 ? '#ffe9c8' : '#ffffff', 1, 380 + Math.random() * 200, 3, 0.22, { dir: ang, spread: 0.9 });
+          }
+          R.shake(e.b ? 9 : 3);
+        }
         if (e.k !== 3 && e.k !== 6) R.burst(e.x, e.y, e.k === 2 ? '#ffd45a' : '#ffffff', e.b ? 18 : 6, e.b ? 420 : 260, e.b ? 5 : 3, 0.3);
         if (toMe) {
           if (e.k !== 3 && e.k !== 6) play('hurt', 0.9);
           R.shake(e.a > 150 ? 12 : 6);
         } else if (byMe) {
           if (e.k !== 3) play(e.b || e.a > 120 ? 'hitBig' : 'hit', 0.9);
-          if (e.b) R.shake(9);
         } else if (e.k !== 3) play('hit', this.vol(e.x, e.y) * 0.4);
         break;
       }

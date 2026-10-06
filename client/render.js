@@ -126,7 +126,8 @@ export class Renderer {
     this.canvas.style.width = `${this.w}px`;
     this.canvas.style.height = `${this.h}px`;
     // 모든 유저가 같은 넓이의 월드를 보도록
-    this.zoom = Math.sqrt((this.w * this.h) / (VIEW_W * VIEW_H));
+    // 캐릭터가 작아 보이지 않게 기준보다 20% 확대
+    this.zoom = Math.sqrt((this.w * this.h) / (VIEW_W * VIEW_H)) * 1.2;
   }
 
   // 바닥 타일 무늬 (구역마다 색과 크기를 다르게)
@@ -245,7 +246,7 @@ export class Renderer {
   }
 
   text(x, y, str, color = '#fff', size = 16, dur = 0.8, opts = {}) {
-    this.texts.push({ x: x + (Math.random() - 0.5) * 14, y, str, color, size, t: 0, dur, vy: opts.vy ?? -70, bold: opts.bold ?? true, stroke: opts.stroke ?? true });
+    this.texts.push({ x: x + (Math.random() - 0.5) * 34, y, str, color, size, t: 0, dur, vy: opts.vy ?? -90, bold: opts.bold ?? true, stroke: opts.stroke ?? true });
     if (this.texts.length > 120) this.texts.shift();
   }
 

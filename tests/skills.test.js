@@ -351,5 +351,22 @@ assert.equal(runeResult(4, 4), -1);
   ok('대상 지정 기본 공격(근접): 준비 중 물러나도 맞음');
 }
 
+// D 구르기: 커서 방향으로 이동 + 잠깐 무적
+{
+  const { g, a, d } = duel('longbow', 400);
+  aimAt(a, 0, 500);
+  const y0 = a.y;
+  a.input.p[PRESS.d]++;
+  g.step(DT);
+  assert.ok(a.st.iframeT > 0, '구르기 무적');
+  const hp0 = a.hp;
+  g.dealDamage(d, a, 100, { kind: 'basic', pre: true });
+  assert.equal(a.hp, hp0, '구르는 중엔 피해 무시');
+  run(g, 0.3);
+  assert.ok(a.y - y0 > 150, `구른 거리 ${Math.round(a.y - y0)}`);
+  assert.ok(a.cd.d > 6, '구르기 쿨타임');
+  ok('D 구르기: 커서 방향 이동 + 무적 + 쿨타임');
+}
+
 for (const r of results) console.log(`- ${r}`);
 console.log('skills.test 통과');

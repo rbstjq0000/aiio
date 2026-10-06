@@ -83,7 +83,9 @@ export const CombatMixin = {
       p.combo = step + 1;
       p.comboT = 0;
       p.act = { key: 'basic', sk, c, step, t: 0, hitAt: c.windup, dur: c.dur, done: false, dir, moveMult: sk.moveMult, tgt: tgt ? tgt.id : 0 };
-      if (c.lunge) this.lunge(p, dir, c.lunge);
+      // 붙어 있는 대상에게는 앞으로 내딛지 않음 (몸이 겹쳐 뒤엉켜 보이지 않게)
+      const close = tgt && dist2(tgt.x, tgt.y, p.x, p.y) < (c.range * 0.75 + tgt.r) ** 2;
+      if (c.lunge && !close) this.lunge(p, dir, c.lunge);
       this.emit({ e: 'swing', id: p.id, s: step, a: r2(dir), x: Math.round(p.x), y: Math.round(p.y) });
     } else {
       p.act = { key: 'basic', sk, t: 0, hitAt: sk.windup, dur: sk.dur, done: false, dir, moveMult: sk.moveMult, tgt: tgt ? tgt.id : 0 };
@@ -762,6 +764,26 @@ export const CombatMixin = {
       if (dealt >= 0) n++;
     }
     return n;
+  },
+
+  // ---------------- D 구르기 ----------------
+  // 커서 방향으로 짧게 구르며 잠깐 무적. 하던 공격·채널을 끊고 즉시 사용
+  tryRoll(p) {
+    if (!p.alive || p.cd.d > 0 || p.st.stunT > 0 || p.st.rootT > 0) return false;
+    let dx = (Number.isFinite(p.input.cx) ? p.input.cx : p.x + Math.cos(p.aim)) - p.x;
+    let dy = (Number.isFinite(p.input.cy) ? p.input.cy : p.y + Math.sin(p.aim)) - p.y;
+    const len = Math.sqrt(dx * dx + dy * dy) || 1;
+    dx /= len;
+    dy /= len;
+    p.act = null;
+    p.channel = null;
+    p.kbx = 0;
+    p.kby = 0;
+    startDash(p, dx, dy, C.ROLL.time, C.ROLL.dist);
+    p.st.iframeT = Math.max(p.st.iframeT, C.ROLL.iframe);
+    p.cd.d = C.ROLL.cd;
+    this.emit({ e: 'dash', id: p.id, x: Math.round(p.x), y: Math.round(p.y), dx: r2(dx), dy: r2(dy) });
+    return true;
   },
 
   // ---------------- 피해 ----------------

@@ -169,7 +169,7 @@ function decide(game, p, b) {
   // 이미 둘 이상이 노리는 상대에겐 끼어들지 않음 (한 명을 우르르 몰려가 잡는 것 방지)
   let ganged = 0;
   if (enemy) for (const q of game.players.values()) if (q !== p && q.isBot && q.alive && q.brain.mode === 'fight' && q.brain.target === enemy.id) ganged++;
-  if (enemy && (ed < engage || defending || enemy.orbs.length) && p.invulnT <= 0 && (ganged < 2 || defending || enemy.orbs.length)) {
+  if (enemy && (ed < engage || defending || enemy.orbs.length) && p.invulnT <= 0 && (ganged < 1 || defending || enemy.orbs.length)) {
     const courage = defending ? 0.85 + b.aggro * 0.5 : 0.55 + b.aggro * 0.6;
     const brave = power(p) * courage > power(enemy) || enemy.hp < enemy.maxHp * 0.25 || (enemy.orbs.length && hpR > 0.5);
     if (brave) {
@@ -414,6 +414,10 @@ function act(game, p, b, dt) {
       inp.cx = p.x + out.dashX * 250;
       inp.cy = p.y + out.dashY * 250;
       press(p, 'e');
+    } else if (p.cd.d <= 0 && (b.skill > 0.4 || b.mode === 'flee')) {
+      inp.cx = p.x + out.dashX * 250;
+      inp.cy = p.y + out.dashY * 250;
+      press(p, 'd');
     }
   }
 }
