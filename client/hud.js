@@ -1,6 +1,6 @@
 // HUD: 무기(등급)·체력·강화석·스킬, 증강 3칸(세트), 증강 카드(교체·건너뛰기), 상자 뽑기, 미니맵, 킬피드, 착지 지도
 import * as C from '../shared/constants.js';
-import { WEAPONS, RARITIES, STONE_COST, MYTHIC, TIER_SLOT, skillInfo, canTake } from '../shared/items.js';
+import { WEAPONS, RARITIES, STONE_COST, MYTHIC, TIER_SLOT, skillInfo, canTake, WEAPON_IDS } from '../shared/items.js';
 import { AUG_BY_ID, AUG_TIERS, AUG_SLOTS, FAMILIES, FAMILY_BY_ID, augDesc } from '../shared/augments.js';
 import { IMG, faceOf } from './assets.js';
 
@@ -12,7 +12,7 @@ const SLOTS = [
   { k: 'w', key: 'W' },
   { k: 'e', key: 'E' },
   { k: 'r', key: 'R' },
-  { k: 'd', key: 'D', spell: true },
+  { k: 'd', key: 'Space', spell: true },
 ];
 const SLOT_NAME = { basic: '평타', q: 'Q', w: 'W', e: 'E', r: 'R' };
 
@@ -108,7 +108,7 @@ export class Hud {
     $('weapon').style.setProperty('--rc', rc.color);
     const beats = WEAPONS[w.beats];
     const lost = Object.values(WEAPONS).find((x) => x.beats === w.id);
-    $('weapon-tip').innerHTML = `<b style="color:${w.color}">${w.icon} ${w.name}</b> · ${w.role}<br><span class="good">강함 → ${beats.icon} ${beats.name} (피해 +${Math.round(C.COUNTER_BONUS * 100)}%)</span> · <span class="bad">약함 ← ${lost.icon} ${lost.name}</span><br>무기 공명: ${FAMILY_BY_ID[w.family].icon} ${FAMILY_BY_ID[w.family].name} 증강 세트 +1${w.tiers
+    $('weapon-tip').innerHTML = `<b style="color:${w.color}">${w.icon} ${w.name}</b> · ${w.role}<br><span class="good">강함 → ${beats.icon} ${beats.name}</span> · <span class="bad">약함 ← ${lost.icon} ${lost.name}</span><br>무기 공명: ${FAMILY_BY_ID[w.family].icon} ${FAMILY_BY_ID[w.family].name} 증강 세트 +1${w.tiers
       .map((t, i) => (t ? `<i class="tip-up${g >= i ? ' got' : ''}" style="--rc:${RARITIES[i].color}">${RARITIES[i].name} (${SLOT_NAME[TIER_SLOT[i]]}): ${t.desc}</i>` : ''))
       .join('')}`;
     // 얼굴 (스킨)
@@ -181,6 +181,7 @@ export class Hud {
     ultEl.classList.toggle('ready', me.ult >= 100);
     ultEl.querySelector('.slot-cdtext').textContent = me.ult < 100 ? `${Math.floor(me.ult)}%` : '';
     this.updateOffer(game, me);
+    this.updateWeaponBox(game, me);
 
     this.acc += dt;
     if (this.acc < 0.08) return;
@@ -305,6 +306,50 @@ export class Hud {
     }, dur * 1000);
     clearTimeout(this.rollHide);
     this.rollHide = setTimeout(() => roll.classList.add('hidden'), dur * 1000 + 900);
+  }
+
+  // ---------------- 상자 무기 (나에게만): 장착 / 강화석으로 분해 ----------------
+  updateWeaponBox(game, me) {
+    const box = $('wbox');
+    const wo = me.al ? me.wo : null;
+    if (!wo || performance.now() < this.rollUntil || !game.ui) {
+      box.classList.add('hidden');
+      if (!wo) this.woId = 0;
+      return;
+    }
+    if (wo[0] !== this.woId) {
+      this.woId = wo[0];
+      const type = WEAPON_IDS[wo[1]];
+      const w = WEAPONS[type];
+      const rc = RARITIES[wo[2]];
+      const cur = game.ui.gear.weapon;
+      const ok = canTake(cur, { type, rarity: wo[2] });
+      box.style.setProperty('--rc', rc.color);
+      const note = !ok
+        ? '<span class="warn">같은 무기의 같거나 낮은 등급 — 분해만 가능</span>'
+        : type === cur.type
+          ? `지금 무기 등급 올리기 (${RARITIES[cur.rarity].name} → ${rc.name})`
+          : `지금: ${RARITIES[cur.rarity].name} ${WEAPONS[cur.type].name} → 들던 무기는 강화석 +${C.DISMANTLE_STONES[cur.rarity]}`;
+      $('wbox-card').innerHTML = `<div class="wi">${w.icon}</div><div><b>${rc.name} ${w.name}</b>${w.role} · ${WEAPONS[w.beats].name}에게 강함<br>${note}</div>`;
+      $('wbox-equip').disabled = !ok;
+      $('wbox-stones').textContent = `(강화석 +${C.DISMANTLE_STONES[wo[2]]})`;
+      $('wbox-equip').onmousedown = (e) => {
+        e.stopPropagation();
+        this.weaponChoice(game, 1);
+      };
+      $('wbox-break').onmousedown = (e) => {
+        e.stopPropagation();
+        this.weaponChoice(game, 2);
+      };
+    }
+    box.classList.remove('hidden');
+  }
+
+  weaponChoice(game, k) {
+    const wo = game.me && game.me.al && game.me.wo;
+    if (!wo || performance.now() < this.rollUntil) return false;
+    if (k === 1 && $('wbox-equip').disabled) return true;
+    return game.pickWeapon(k);
   }
 
   // ---------------- 증강 3택1 (+ 칸이 꽉 차면 교체) ----------------

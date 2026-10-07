@@ -198,24 +198,38 @@ const ok = (name) => results.push(name);
 }
 
 // ---------------- 상자·무기 줍기·강화석 ----------------
-// 상자를 열면 무기가 바닥에 떨어짐 → 우클릭으로 주우면 바꿔 들고, 원래 무기는 바닥에
+// 상자를 열면 연 사람에게만 무기 창: 장착(들던 무기는 강화석) 또는 분해(강화석). 바닥에는 안 떨어짐
 {
-  const { g, a } = duel('dagger', 900);
+  const { g, a, d } = duel('dagger', 900);
   const c = g.addChest(a.x + 40, a.y, 'big');
   a.input.ti = c.id;
   a.input.p[PRESS.act]++;
   run(g, C.CHEST_OPEN + 0.3);
   assert.ok(c.open, '상자 열림');
-  assert.equal(g.items.length, 1, '무기가 떨어짐');
-  const it = g.items[0];
-  it.type = 'scroll';
-  it.rarity = 2;
-  a.input.ti = it.id;
-  a.input.p[PRESS.act]++;
-  run(g, 0.4);
+  assert.equal(g.items.length, 0, '바닥에 안 떨어짐');
+  assert.ok(a.wOffer, '연 사람에게 무기 창');
+  assert.ok(!d.wOffer && !g.snapshotFor(d.id).me.wo, '다른 사람은 모름');
+  assert.ok(g.snapshotFor(a.id).me.wo, '스냅샷에 내 무기 창');
+  a.wOffer.type = 'scroll';
+  a.wOffer.rarity = 2;
+  const s0 = a.stones;
+  a.input.wo = a.wOffer.id;
+  a.input.wk = 1;
+  g.step(DT);
   assert.equal(a.gear.weapon.type, 'scroll');
   assert.equal(a.gear.weapon.rarity, 2);
-  assert.ok(g.items.some((q) => q.type === 'dagger'), '원래 무기는 바닥에');
+  assert.ok(!a.wOffer);
+  assert.equal(a.stones, s0 + C.DISMANTLE_STONES[0], '들던 무기는 강화석으로');
+  // 같은 무기 낮은 등급은 장착 불가 → 분해만
+  g.offerWeapon(a, 'scroll', 1);
+  a.input.wo = a.wOffer.id;
+  a.input.wk = 1;
+  g.step(DT);
+  assert.ok(a.wOffer, '낮은 등급은 장착 안 됨');
+  const s1 = a.stones;
+  a.input.wk = 2;
+  g.step(DT);
+  assert.ok(!a.wOffer && a.stones === s1 + C.DISMANTLE_STONES[1], '분해 → 강화석');
   // 같은 무기는 더 높은 등급일 때만 (합성 없음)
   assert.equal(canTake({ type: 'scroll', rarity: 2 }, { type: 'scroll', rarity: 2 }), false);
   assert.equal(canTake({ type: 'scroll', rarity: 2 }, { type: 'scroll', rarity: 3 }), true);
@@ -232,7 +246,7 @@ const ok = (name) => results.push(name);
     return s / 3000;
   };
   assert.ok(avg(0, 'small') < avg(400, 'small') && avg(0, 'small') < avg(0, 'big'));
-  ok('상자 → 바닥에 무기 → 우클릭으로 바꿔 들기 (같은 무기는 더 높은 등급만)');
+  ok('상자 → 연 사람에게만 무기 창: 장착(들던 무기는 강화석) 또는 분해 (같은 무기는 더 높은 등급만)');
 }
 
 // 캠프 상자는 캠프 몹을 다 잡아야 열림
@@ -559,7 +573,7 @@ const ok = (name) => results.push(name);
   run(g, 0.3);
   assert.ok(a.y - y0 > 150, `구른 거리 ${Math.round(a.y - y0)}`);
   assert.ok(a.cd.d > 6 && a.rolls === 0, '구르기 쿨타임');
-  ok('D 구르기: 커서 방향 이동 + 무적 + 쿨타임');
+  ok('구르기(Space·D): 커서 방향 이동 + 무적 + 쿨타임');
 }
 
 void AUG_BY_ID;

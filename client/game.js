@@ -4,7 +4,7 @@ import { stepBody, startDash } from '../shared/physics.js';
 import { NavGrid } from '../shared/nav.js';
 import { WEAPONS, WEAPON_IDS, RARITIES } from '../shared/items.js';
 import { AUG_BY_ID, AUG_TIERS, FAMILY_BY_ID } from '../shared/augments.js';
-import { MONSTERS } from '../shared/monsters.js';
+import { MONSTERS, MONSTER_BY_IDX } from '../shared/monsters.js';
 import { PROJ_KINDS, AREA_KINDS, PF, CHEST_KINDS, ZONE_STAGE, LAIR_STATE } from '../shared/sim.js';
 import { COSMETIC_MAP } from '../shared/cosmetics.js';
 
@@ -43,7 +43,7 @@ function decodePlayer(a) {
 }
 
 function decodeMonster(a) {
-  return { id: a[0], type: a[1], x: a[2], y: a[3], hp: a[4], maxHp: a[5], aim: a[6], state: a[7], wind: a[8], cc: a[9], slow: a[10], r: [15, 15, 26, 24, 38][a[1]] };
+  return { id: a[0], type: a[1], x: a[2], y: a[3], hp: a[4], maxHp: a[5], aim: a[6], state: a[7], wind: a[8], cc: a[9], slow: a[10], r: (MONSTER_BY_IDX[a[1]] || { r: 20 }).r };
 }
 
 export class GameClient {
@@ -105,7 +105,7 @@ export class GameClient {
   start(m) {
     this.meId = m.you;
     this.mode = m.mode;
-    const obstacles = m.map.obstacles.map((o) => ({ x: o[0], y: o[1], r: o[2], k: o[3] }));
+    const obstacles = m.map.obstacles.map((o) => ({ x: o[0], y: o[1], r: o[2], k: o[3], t: o[4] }));
     obstacles.walls = m.map.walls;
     this.map = {
       id: m.map.id,
@@ -115,6 +115,7 @@ export class GameClient {
       walls: m.map.walls,
       bushes: (m.map.bushes || []).map((b) => ({ x: b[0], y: b[1], r: b[2] })),
       pois: m.map.pois || [],
+      props: m.map.props || [],
       decor: m.map.decor,
       camps: (m.map.camps || []).map((c) => ({ id: c[0], x: c[1], y: c[2], type: c[3] })),
       lairs: (m.map.lairs || []).map((l) => ({ id: l[0], x: l[1], y: l[2], kind: l[3], boss: l[4], bossIdx: MONSTERS[l[4]].idx, state: 'sleep', hp: 0, t: l[3] === 'titan' ? C.TITAN_WAKE : C.EPIC_WAKE })),
@@ -142,6 +143,7 @@ export class GameClient {
     this.dead = false;
     this.landing = { t: m.map.landTime || C.LANDING_TIME, lx: null, ly: null, chosen: false };
     this.augPick = { po: 0, pk: 0, pr: 0 };
+    this.wPick = { wo: 0, wk: 0 };
     this.bounties = [];
     this.input.counters = new Array(C.PRESS_N).fill(0);
     this.interactTarget = 0;
@@ -184,6 +186,14 @@ export class GameClient {
     for (const e of s.ev) this.onEvent(e);
   }
 
+  // 상자 무기: 1 = 장착, 2 = 강화석으로 분해
+  pickWeapon(k) {
+    const wo = this.me && this.me.wo;
+    if (!wo) return false;
+    this.wPick = { wo: wo[0], wk: k };
+    return true;
+  }
+
   // 증강 고르기: i = 카드 1~3 (4 = 건너뛰기), rep = 칸이 꽉 찼을 때 바꿀 칸 1~3
   pickAugment(i, rep = 0) {
     const of = this.me && this.me.of;
@@ -214,7 +224,6 @@ export class GameClient {
     }
     if (this.offset == null || est > this.offset) this.offset = est;
     else this.offset = this.offset * 0.995 + est * 0.005;
-    this.prevItems = new Set((this.latest ? this.latest.it : []).map((g) => g[0]));
     const snap = {
       tm: s.tm,
       pl: new Map(s.pl.map((a) => [a[0], decodePlayer(a)])),
@@ -243,6 +252,7 @@ export class GameClient {
       }
       // 고른 증강 제안이 끝났으면 선택 초기화
       if (this.augPick.po && (!s.me.of || s.me.of.id !== this.augPick.po)) this.augPick = { po: 0, pk: 0, pr: 0 };
+      if (this.wPick.wo && (!s.me.wo || s.me.wo[0] !== this.wPick.wo)) this.wPick = { wo: 0, wk: 0 };
     }
     for (const e of s.ev) this.onEvent(e);
   }
@@ -280,7 +290,7 @@ export class GameClient {
   }
 
   // 커서 근처의 적 (플레이어·몬스터). 롤처럼 몸통을 대충 눌러도 잡히게 여유를 둠
-  enemyAt(wx, wy, pad = 30) {
+  enemyAt(wx, wy, pad = 55) {
     const s = this.latest;
     if (!s) return null;
     let best = null;
@@ -323,6 +333,32 @@ export class GameClient {
       if (d < range && d < bd) {
         bd = d;
         best = { id: m.id, x: m.x, y: m.y, r: m.r };
+      }
+    }
+    return best;
+  }
+
+  // 자동 공격 대상: 사거리 안의 적 플레이어 우선, 없으면 이미 싸우는 중인(체력이 깎인) 몬스터. 가만히 있는 정글 몹은 건드리지 않음
+  autoTarget(x, y, range) {
+    const s = this.latest;
+    if (!s) return null;
+    let best = null;
+    let bd = Infinity;
+    for (const p of s.pl.values()) {
+      if (p.id === this.meId || p.flags & PF.INVIS) continue;
+      const d = Math.hypot(p.x - x, p.y - y) - p.r;
+      if (d < range && d < bd) {
+        bd = d;
+        best = p;
+      }
+    }
+    if (best) return best;
+    for (const m of s.mo.values()) {
+      if (m.hp >= m.maxHp) continue;
+      const d = Math.hypot(m.x - x, m.y - y) - m.r;
+      if (d < range && d < bd) {
+        bd = d;
+        best = m;
       }
     }
     return best;
@@ -526,6 +562,13 @@ export class GameClient {
         this.atkMove = false;
       } else if (!this.moveTarget) this.atkMove = false;
     }
+    // 자동 공격 (롤처럼): 가만히 서 있으면 사거리 안의 가장 가까운 적 플레이어(또는 나와 싸우는 몬스터)를 알아서 공격
+    // 상자를 다 열었거나 물건이 사라졌으면 상호작용 대상을 놓음
+    if (this.interactTarget && this.latest && !this.latest.ch.some((c) => c[0] === this.interactTarget && !c[3]) && !this.latest.it.some((g) => g[0] === this.interactTarget)) this.interactTarget = 0;
+    if (!this.atkTarget && !this.moveTarget && !this.interactTarget && !this.pendingCast && alive && this.autoAttack !== false) {
+      const foe = this.autoTarget(px, py, range + 20);
+      if (foe) this.atkTarget = foe.id;
+    }
     if (this.atkTarget) {
       const t = this.entity(this.atkTarget);
       if (!t) this.atkTarget = 0;
@@ -588,6 +631,8 @@ export class GameClient {
       po: this.augPick.po,
       pk: this.augPick.pk,
       pr: this.augPick.pr,
+      wo: this.wPick.wo,
+      wk: this.wPick.wk,
       p,
     });
     if (!alive || !this.pred || !this.ui) return;
@@ -771,11 +816,7 @@ export class GameClient {
     }));
     const souls = latest.so.map((o) => ({ id: o[0], x: o[1], y: o[2], v: o[3] }));
     const chests = latest.ch.map((c) => ({ id: c[0], x: c[1], y: c[2], open: !!c[3], kind: CHEST_KINDS[c[4]] || 'small', locked: !!c[5] }));
-    // 내가 연 상자의 무기는 등급 뽑기 연출이 끝난 뒤에 보여 줌
-    const hide = this.rollHide && performance.now() < this.rollHide.until ? this.rollHide : null;
-    const items = latest.it
-      .filter((g) => !hide || (g[1] - hide.x) ** 2 + (g[2] - hide.y) ** 2 > 110 * 110 || hide.known.has(g[0]))
-      .map((g) => ({ id: g[0], x: g[1], y: g[2], type: WEAPON_IDS[g[3]], rarity: g[4] }));
+    const items = latest.it.map((g) => ({ id: g[0], x: g[1], y: g[2], type: WEAPON_IDS[g[3]], rarity: g[4] }));
     const z = latest.z;
     const zone = { active: !!z[0], x: z[1], y: z[2], r: z[3], tx: z[4], ty: z[5], tr: z[6], stage: ZONE_STAGE[z[7]] || 'wait', st: z[8], phase: z[9] };
     // 카메라: 내 위치(또는 관전 대상) + 마우스 방향으로 살짝
@@ -1044,12 +1085,12 @@ export class GameClient {
         R.burst(e.x, e.y - 10, col, 26, 320, 5, 0.6);
         if (e.by === this.meId) {
           this.hud.chestRoll(e.r, e.k, !!e.aug, e.w);
-          // 이미 바닥에 있던 무기는 그대로 보이게 기억
-          const known = this.prevItems || new Set();
-          this.rollHide = { x: e.x, y: e.y, until: this.hud.rollUntil - 150, known };
         }
         break;
       }
+      case 'dismantle':
+        R.text(e.x, e.y - 50, `분해 · 강화석 +${e.n}`, '#9fe8ff', 15, 0.9);
+        break;
       case 'chestdrop':
         R.anim('spark', e.x, e.y - 14, { dur: 0.5 });
         break;

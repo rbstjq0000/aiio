@@ -41,6 +41,11 @@ export const CombatMixin = {
   atkSpeed(p) {
     let a = 1 + ((p.stats && p.stats.atkSpeed) || 0);
     if (this.fam(p, 'blood', 2)) a += 0.4 * (1 - p.hp / p.maxHp);
+    // 두루마리 불씨: 불타는 동안 기본 공격 속도 감소 (기본 공격에 기대는 표창에 특히 강함)
+    if (p.st.burnT > 0) {
+      const src = this.byId.get(p.st.burnSrc);
+      if (src && src.isPlayer && src.gear.weapon.type === 'scroll' && WEAPONS[p.gear.weapon.type].basic.type === 'proj') a *= 1 - WEAPONS.scroll.passive.atkSlow;
+    }
     return a;
   },
 
@@ -959,8 +964,8 @@ export const CombatMixin = {
         crit = true;
       }
       if (src.aug.executioner && tgt.hp < tgt.maxHp * 0.35) dmg *= 1 + src.aug.executioner;
-      // 무기 상성: 이기는 무기에게 피해 증가
-      if (tgt.isPlayer && WEAPONS[src.gear.weapon.type].beats === tgt.gear.weapon.type) dmg *= 1 + C.COUNTER_BONUS;
+      // 플레이어끼리는 피해 증가: 짧고 굵은 교전 (몬스터 사냥 속도는 그대로)
+      if (tgt.isPlayer) dmg *= C.PVP_DMG;
     }
     if (tgt.isPlayer && !ctx.true && kind !== 'zone') {
       if (tgt.dr) dmg *= 1 - tgt.dr;
@@ -1368,6 +1373,12 @@ export const CombatMixin = {
 
   // 스킬 투사체 적중 효과: 쿨 감소, 거리 비례 기절, 불타는 적 기절, 폭발
   projOnHit(owner, pr, u, wasBurning) {
+    // 표창 패시브: 기본 공격이 맞으면 잠깐 빨라짐 (치고 빠지기)
+    if (pr.ckind === 'basic' && owner.gear.weapon.type === 'shuriken') {
+      const pv = WEAPONS.shuriken.passive;
+      owner.st.hasteT = Math.max(owner.st.hasteT, pv.t);
+      owner.st.haste = Math.max(owner.st.haste, pv.haste);
+    }
     // 브랜드 R: 주변 적에게 튕김 (없으면 같은 적에게 다시)
     if (pr.bounce && pr.bounce.left > 0) {
       let next = null;

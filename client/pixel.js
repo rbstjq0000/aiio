@@ -6,10 +6,32 @@ import { VIEW_W, VIEW_H } from '../shared/constants.js';
 import { IMG, SPR, FX, PROJ, FLOOR, MON_LOOK, WEAPON_LOOK, sheetOf, whiteOf, tintOf } from './assets.js';
 import { RARITIES, WEAPONS } from '../shared/items.js';
 import { MONSTER_BY_IDX } from '../shared/monsters.js';
+import { THEMES, sectorOf } from '../shared/maps.js';
 
 export const PX = 3; // 월드 단위 / 도트 1칸
 const TAU = Math.PI * 2;
 const CHEST_GLOW = { small: '', big: '#ffcf4a', bounty: '#ffd54a', epic: '#c56bff', titan: '#ff7ef2' };
+// 지역(테마)별 나무와 집 그림
+const TREES = {
+  sakura: ['pink', 'pink', 'bigPink'],
+  bamboo: ['bamboo'],
+  snow: ['snowPine', 'snowPine2', 'snowBush', 'bigWhite'],
+  dead: ['dead', 'dead', 'bigDead'],
+  autumn: ['bigAutumn', 'oak', 'bigAutumn'],
+  pine: ['pine', 'pine', 'pine', 'dead'],
+  canyon: ['dead', 'rockB', 'stumpB'],
+  moss: ['treeG', 'treeG2', 'treeG3', 'oak', 'bigGreen'],
+};
+const HOUSES = {
+  sakura: ['houseO', 'houseOB'],
+  bamboo: ['houseB', 'temple'],
+  snow: ['igloo', 'igloo2'],
+  dead: ['hut', 'tent', 'hut'],
+  autumn: ['inn', 'shop'],
+  pine: ['tent', 'hut', 'lodge'],
+  canyon: ['stoneHouse', 'lodge'],
+  moss: ['temple', 'shopG'],
+};
 const FAM_ICONS = ['', '🔥', '⚡', '🌑', '🛡', '🩸', '🍃'];
 
 function hash2(x, y, s = 0) {
@@ -209,8 +231,51 @@ export class PixelRenderer extends Renderer {
     const seed = (map.decor && map.decor.seed) || 1;
     const noise = makeNoise(seed);
     const ponds = map.obstacles.filter((o) => o.k === 5);
-    const dirts = (map.pois || []).map((p, i) => ({ x: p.x, y: p.y, r: i === 0 ? 560 : 300 }));
+    const dirts = (map.pois || []).map((p, i) => ({ x: p.x, y: p.y, r: i === 0 ? 1000 : 320 }));
     const R = map.R;
+    // 연못·흙 바닥을 128 칸 격자에 나눠 담아, 픽셀마다 가까운 것만 봄 (큰 맵에서도 빠르게)
+    const CELL = 128;
+    const GN = Math.ceil((2 * half) / CELL);
+    const bucket = (list, rr) => {
+      const grid = Array.from({ length: GN * GN }, () => []);
+      for (const q of list) {
+        const ext = rr(q) + CELL;
+        const x0 = Math.max(0, Math.floor((q.x - ext + half) / CELL));
+        const x1 = Math.min(GN - 1, Math.floor((q.x + ext + half) / CELL));
+        const y0 = Math.max(0, Math.floor((q.y - ext + half) / CELL));
+        const y1 = Math.min(GN - 1, Math.floor((q.y + ext + half) / CELL));
+        for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) grid[y * GN + x].push(q);
+      }
+      return grid;
+    };
+    const pondGrid = bucket(ponds, (q) => q.r * 1.2 + 10);
+    const dirtGrid = bucket(dirts, (q) => q.r * 1.25);
+    // 지역별 바닥색: 부채꼴마다 색을 섞고, 경계는 부드럽게, 한가운데(도장)는 옅게
+    const SEC = (Math.PI * 2) / 8;
+    const tintGround = (i, wx, wy, dd, mul = 1) => {
+      const a = (Math.atan2(wy, wx) + Math.PI * 2) % (Math.PI * 2);
+      const f = a / SEC;
+      const k0 = Math.floor(f) % 8;
+      const fr = f - Math.floor(f);
+      const edge = 0.1 + (noise(wx / 300 + 21, wy / 300) - 0.5) * 0.08;
+      let k1 = k0;
+      let w = 0;
+      if (fr < edge) {
+        k1 = (k0 + 7) % 8;
+        w = 0.5 - fr / edge / 2;
+      } else if (fr > 1 - edge) {
+        k1 = (k0 + 1) % 8;
+        w = 0.5 - (1 - fr) / edge / 2;
+      }
+      const c0 = THEMES[k0].ground;
+      const c1 = THEMES[k1].ground;
+      const fade = Math.min(1, Math.max(0, (dd - 900) / 900)) * mul;
+      for (let ch = 0; ch < 3; ch++) {
+        const col = c0[ch] * (1 - w) + c1[ch] * w;
+        const al = (c0[3] * (1 - w) + c1[3] * w) * fade;
+        d[i + ch] = d[i + ch] * (1 - al) + col * al;
+      }
+    };
     const set = (i, r, gg, b) => {
       d[i] = r;
       d[i + 1] = gg;
@@ -243,8 +308,9 @@ export class PixelRenderer extends Renderer {
           continue;
         }
         // 연못
+        const gi = Math.min(GN - 1, Math.floor((wy + half) / CELL)) * GN + Math.min(GN - 1, Math.floor((wx + half) / CELL));
         let pond = 99;
-        for (const p of ponds) {
+        for (const p of pondGrid[gi]) {
           const q = Math.sqrt((wx - p.x) ** 2 + (wy - p.y) ** 2) - p.r * (0.95 + (noise(wx / 60 + 9, wy / 60) - 0.5) * 0.25);
           if (q < pond) pond = q;
         }
@@ -262,13 +328,14 @@ export class PixelRenderer extends Renderer {
         }
         // 흙 (마을·유적 바닥)
         let dirt = 99;
-        for (const q of dirts) {
+        for (const q of dirtGrid[gi]) {
           const v2 = Math.sqrt((wx - q.x) ** 2 + (wy - q.y) ** 2) - q.r * (0.8 + noise(wx / 120 + 3, wy / 120 + 7) * 0.4);
           if (v2 < dirt) dirt = v2;
         }
         if (dirt < 0) {
           const t = tile(FLOOR.dirt, px % 16, py % 16);
           set(o, tp[t], tp[t + 1], tp[t + 2]);
+          tintGround(o, wx, wy, dd, 0.5);
           type[py * S + px] = 3;
           continue;
         }
@@ -280,12 +347,14 @@ export class PixelRenderer extends Renderer {
         const t = tile(ft, px % 16, py % 16);
         if (dirt < 4) set(o, tp[t] * 0.8, tp[t + 1] * 0.85, tp[t + 2] * 0.7);
         else set(o, tp[t], tp[t + 1], tp[t + 2]);
+        tintGround(o, wx, wy, dd);
         type[py * S + px] = 2;
       }
     }
     g.putImageData(img, 0, 0);
     // 꽃·풀 장식
     const rnd = seededRng(seed * 7 + 3);
+    const obsGrid = bucket(map.obstacles, (o) => o.r + 30);
     const deco = ['flower0', 'flower1', 'flower2', 'flower3', 'flower6', 'tuft', 'tuft', 'tuft'];
     const n = Math.floor((S * S) / 1400);
     for (let i = 0; i < n; i++) {
@@ -294,7 +363,8 @@ export class PixelRenderer extends Renderer {
       if (type[py * S + px] !== 2) continue;
       const wx = px * PX - half;
       const wy = py * PX - half;
-      if (map.obstacles.some((o) => (o.x - wx) ** 2 + (o.y - wy) ** 2 < (o.r + 30) ** 2)) continue;
+      const bi = Math.min(GN - 1, Math.floor((wy + half) / CELL)) * GN + Math.min(GN - 1, Math.floor((wx + half) / CELL));
+      if (obsGrid[bi].some((o) => (o.x - wx) ** 2 + (o.y - wy) ** 2 < (o.r + 30) ** 2)) continue;
       const sp = SPR[deco[Math.floor(rnd() * deco.length)]];
       g.drawImage(IMG[sp[0]], sp[1], sp[2], sp[3], sp[4], px - 8, py - 8, sp[3], sp[4]);
     }
@@ -318,36 +388,56 @@ export class PixelRenderer extends Renderer {
     st = [];
     for (const o of map.obstacles) {
       const h = hash2(Math.round(o.x), Math.round(o.y), 5);
+      const th = THEMES[o.t != null ? o.t : sectorOf(o.x, o.y)].id;
+      const pick = (arr) => arr[Math.floor(h * arr.length)];
       let spr = null;
-      let oy = 0;
+      let tree = false;
       switch (o.k) {
         case 0:
-          spr = o.r >= 22 ? 'rockG' : 'srockG';
-          break;
         case 1:
-          spr = 'rockB';
+          spr = th === 'snow' ? (o.r >= 22 ? 'snowRock' : 'srockG') : th === 'canyon' || o.k === 1 ? (o.r >= 22 ? 'rockB' : 'srockB') : o.r >= 22 ? 'rockG' : 'srockG';
           break;
         case 2:
-          spr = o.r >= 24 && h < 0.35 ? 'bigGreen' : ['treeG', 'treeG2', 'treeG3', 'oak'][Math.floor(h * 4)];
-          break;
         case 3:
-          spr = h < 0.25 ? 'dead' : 'pine';
-          break;
         case 4:
-          spr = h < 0.3 ? 'bigPink' : 'pink';
+          tree = true;
+          spr = pick(TREES[th] || TREES.moss);
           break;
         case 6:
-          spr = o.r >= 18 ? 'stumpB' : 'stumpS';
+          spr = th === 'snow' ? 'srockG' : o.r >= 18 ? 'stumpB' : 'stumpS';
+          break;
+        case 7:
+          tree = true;
+          spr = pick(HOUSES[th] || HOUSES.moss);
+          break;
+        case 8:
+          spr = th === 'dead' || th === 'moss' ? pick(['statueOrbM', 'statueM']) : pick(['statueOrb', 'statue', 'statueFrog']);
+          break;
+        case 9:
+          spr = 'lantern';
+          break;
+        case 10:
+          tree = true;
+          spr = th === 'snow' ? 'igloo' : th === 'canyon' || th === 'dead' ? 'hut' : 'tent';
           break;
         default:
           break;
       }
       if (!spr) continue;
       const s = SPR[spr];
-      const tree = o.k >= 2 && o.k <= 4;
       // 그림의 발밑을 충돌 원 아래쪽에 맞춤
-      oy = tree ? s[4] - 3 : s[4] === 16 ? 11 : s[4] === 32 ? 22 : s[4] - 4;
+      const oy = o.k === 7 || o.k === 10 ? s[4] - Math.round(o.r / PX / 2) : tree ? s[4] - 3 : s[4] === 16 ? 11 : s[4] === 32 ? 22 : s[4] - 4;
+      // 대나무는 줄기 3개를 모아 그림
+      if (spr === 'bamboo') {
+        for (const [dx, dy] of [[-6, 0], [5, -2], [0, 3]]) st.push({ x: o.x + dx * PX, y: o.y + dy * PX, sort: o.y + dy * PX + 6, spr, ox: 8, oy: 45, tree: true, w: 16, h: 48 });
+        continue;
+      }
       st.push({ x: o.x, y: o.y, sort: o.y + (tree ? 6 : 0), spr, ox: s[3] / 2, oy, tree, w: s[3], h: s[4] });
+    }
+    // 장식 (충돌 없음): 도리이, 도장 간판
+    for (const q of map.props || []) {
+      const s = SPR[q.kind];
+      if (s) st.push({ x: q.x, y: q.y, sort: q.y, spr: q.kind, ox: s[3] / 2, oy: s[4] - 2, tree: true, w: s[3], h: s[4] });
     }
     // 벽: 돌 블록을 이어 붙임
     for (const w of map.walls || []) {

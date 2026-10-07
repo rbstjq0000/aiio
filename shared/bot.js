@@ -15,8 +15,8 @@ export const BOT_NAMES = [
 // 무기별 교전 거리와 스킬 사용 조건
 const AI = {
   dagger: { pref: 55, reach: 82, q: { min: 60, max: 740, aim: true }, w: { min: 200, max: 650, ground: true }, e: { max: 170 }, r: { max: 520, exec: true } },
-  shuriken: { pref: 470, reach: 690, q: { min: 120, max: 880, aim: true }, w: { max: 560, aim: true }, e: { max: 200, escape: true }, r: { max: 680, aim: true } },
-  scroll: { pref: 520, reach: 725, q: { max: 920, aim: true }, w: { max: 980, aim: true }, e: { max: 200, escape: true }, r: { max: 590, ground: true } },
+  shuriken: { pref: 450, reach: 660, q: { min: 120, max: 880, aim: true }, w: { max: 560, aim: true }, e: { max: 200, escape: true }, r: { max: 680, aim: true } },
+  scroll: { pref: 580, reach: 785, q: { max: 920, aim: true }, w: { max: 980, aim: true }, e: { max: 200, escape: true }, r: { max: 590, ground: true } },
 };
 
 const PROJ_SPEED = { shuriken: 1250, scroll: 860 };
@@ -137,7 +137,7 @@ function decide(game, p, b) {
   }
   const ed = Math.sqrt(ed2);
 
-  // 판 흐름 조절: 생존 인원이 목표 곡선보다 적으면 봇끼리는 먼저 싸움을 걸지 않음 (사람은 영향 없음)
+  // 판 흐름 조절: 생존 인원이 목표 곡선보다 많이 적을 때만 봇끼리 먼 싸움을 덜 검 (가까이 마주치면 싸움)
   const pace = game.aliveCount() > desiredAlive(game);
   let attacker = game.time - p.lastHitByT < 3 ? game.players.get(p.lastHitBy) : null;
   if (attacker && attacker.isBot && (game.time < 60 || !pace) && !(attacker.brain.mode === 'fight' && attacker.brain.target === p.id)) {
@@ -145,26 +145,27 @@ function decide(game, p, b) {
     b.avoidT = 2.5;
     attacker = null;
   }
-  if (attacker && attacker.alive && dist2(p.x, p.y, attacker.x, attacker.y) < 600 * 600) enemy = attacker;
+  if (attacker && attacker.alive && dist2(p.x, p.y, attacker.x, attacker.y) < 700 * 700) enemy = attacker;
   const defending = !!attacker && enemy === attacker;
 
-  // 시간이 갈수록 호전적으로: 초반엔 파밍 위주, 후반(자기장 3단계 이후)엔 적극적으로 싸움
-  const ramp = Math.min(1, Math.max(0, (game.time - 45) / 280));
-  const engage = (game.time < 45 ? 0 : 90 + ramp * 470) * (0.7 + b.aggro * 0.6);
+  // 롤처럼 먼저 싸움을 검: 시야(약 650) 안에 적이 보이면 비슷한 상대에게도 덤빔. 초반 40초만 파밍
+  const ramp = Math.min(1, Math.max(0, (game.time - 60) / 240));
+  // 목표 곡선보다 사람이 적게 남았으면 봇끼리는 먼저 싸움을 걸지 않음 (사람에게는 그대로, 맞으면 반격)
+  const near = enemy && !enemy.isBot ? 1 : pace ? 1 : 0;
+  const engage = game.time < 60 ? 0 : near ? (420 + ramp * 260) * (0.85 + b.aggro * 0.3) : 0;
   // 이미 둘 이상이 노리는 상대에겐 끼어들지 않음 (한 명을 우르르 몰려가 잡는 것 방지)
   let ganged = 0;
   if (enemy) for (const q of game.players.values()) if (q !== p && q.isBot && q.alive && q.brain.mode === 'fight' && q.brain.target === enemy.id) ganged++;
-  const allowed = defending || !enemy || !enemy.isBot || pace;
-  if (enemy && allowed && (ed < engage || defending) && p.invulnT <= 0 && (ganged < 1 || defending)) {
-    const courage = defending ? 0.85 + b.aggro * 0.5 : (0.35 + ramp * 0.25) + b.aggro * 0.5;
-    const melee = AI[p.gear.weapon.type].pref < 200;
-    const brave = power(p) * courage * (melee && ed < 300 ? 1.3 : 1) > power(enemy) || enemy.hp < enemy.maxHp * 0.25;
-    if (brave) {
+  if (enemy && (ed < engage || defending) && p.invulnT <= 0 && (ganged < 1 || defending)) {
+    // 비슷하면 싸움 (용기 0.9~1.3), 확실히 불리하면(체력 낮음) 빠짐
+    const courage = defending ? 1.0 + b.aggro * 0.4 : 0.85 + b.aggro * 0.35 + ramp * 0.1;
+    const brave = power(p) * courage > power(enemy) || enemy.hp < enemy.maxHp * 0.3;
+    if (brave && hpR > 0.25) {
       b.mode = 'fight';
       b.target = enemy.id;
       return;
     }
-    if (hpR < 0.55 || defending) {
+    if (hpR < 0.6 || defending) {
       b.mode = 'flee';
       b.target = enemy.id;
       return;
@@ -305,15 +306,26 @@ function act(game, p, b, dt) {
     b.wanderT -= dt;
     if (b.wanderT <= 0 || dist2(p.x, p.y, b.wx, b.wy) < 60 * 60) {
       b.wanderT = 3 + rng() * 3;
-      // 안전지대 안의 정글 캠프나 무작위 지점으로
+      // 내 구역에서 시간에 따라 안쪽으로: 처음엔 해안 쪽, 4~7분엔 가운데 (모두 한가운데로 몰리지 않게)
       const z = game.zone;
       const zr = Math.min(z.r, game.R) * 0.8;
-      const inside = game.camps.filter((c) => dist2(c.x, c.y, z.x, z.y) < zr * zr);
-      const c = inside.length && rng() < 0.6 ? inside[Math.floor(rng() * inside.length)] : null;
-      const a = rng() * Math.PI * 2;
-      const d = Math.sqrt(rng()) * zr;
-      b.wx = c ? c.x + (rng() - 0.5) * 200 : z.x + Math.cos(a) * d;
-      b.wy = c ? c.y + (rng() - 0.5) * 200 : z.y + Math.sin(a) * d;
+      const home = p.spawn ? Math.atan2(p.spawn[1], p.spawn[0]) : rng() * Math.PI * 2;
+      const k = Math.min(1, game.time / 420);
+      const band = game.R * (0.78 - 0.55 * k);
+      let tx = 0;
+      let ty = 0;
+      for (let tries = 0; tries < 8; tries++) {
+        const a = home + (rng() - 0.5) * (0.7 + k * 1.6);
+        const d = Math.max(150, band + (rng() - 0.5) * game.R * 0.22);
+        tx = Math.cos(a) * d;
+        ty = Math.sin(a) * d;
+        if (dist2(tx, ty, z.x, z.y) < zr * zr) break;
+        // 안전지대 밖이면 안쪽으로 당김
+        tx = z.x + (tx - z.x) * 0.5;
+        ty = z.y + (ty - z.y) * 0.5;
+      }
+      b.wx = tx;
+      b.wy = ty;
     }
     [out.mx, out.my] = navDir(game, p, b, b.wx, b.wy);
   }

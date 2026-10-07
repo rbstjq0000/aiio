@@ -5,7 +5,8 @@
 // 누름은 카운터로 보내서 틱 사이에 누른 것도 놓치지 않음
 import { PRESS, PRESS_N } from '../shared/constants.js';
 
-const KEYMAP = { KeyQ: 'q', KeyW: 'w', KeyE: 'e', KeyR: 'r', KeyD: 'd' };
+// 구르기: 스페이스 (D도 됨)
+const KEYMAP = { KeyQ: 'q', KeyW: 'w', KeyE: 'e', KeyR: 'r', KeyD: 'd', Space: 'd' };
 
 export class Input {
   constructor(canvas) {

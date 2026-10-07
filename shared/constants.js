@@ -55,9 +55,11 @@ export const ASSIST_STONES = 3;
 // 2초 안에 3명 이상에게 맞는 중이면 받는 피해 -15% (1:3에서 바로 녹지 않게)
 export const GANG_N = 3;
 export const GANG_DR = 0.15;
-export const COUNTER_BONUS = 0.06; // 무기 상성: 이기는 무기에게 주는 피해 +6%
+export const PVP_DMG = 1.5; // 플레이어끼리 주는 피해 배율 (교전 시간 약 6~10초)
 // 증강 카드 건너뛰기 → 강화석
 export const SKIP_STONES = 3;
+// 상자 무기를 분해(또는 바꿔 들 때 원래 무기)하면 주는 강화석 (등급별)
+export const DISMANTLE_STONES = [2, 4, 7, 11, 16, 24];
 
 // 전투 규칙
 export const CC_MAX = 1;

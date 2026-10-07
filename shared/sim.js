@@ -71,7 +71,7 @@ function makeStatus() {
 export const PRESS = C.PRESS;
 
 export function emptyInput() {
-  return { seq: 0, mx: 0, my: 0, aim: 0, atk: false, cx: 0, cy: 0, ti: 0, at: 0, po: 0, pk: 0, pr: 0, p: new Array(C.PRESS_N).fill(0) };
+  return { seq: 0, mx: 0, my: 0, aim: 0, atk: false, cx: 0, cy: 0, ti: 0, at: 0, po: 0, pk: 0, pr: 0, wo: 0, wk: 0, p: new Array(C.PRESS_N).fill(0) };
 }
 
 const num = (v, d = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
@@ -96,6 +96,9 @@ export function sanitizeInput(raw, prev) {
   inp.po = int(raw.po, 0);
   inp.pk = int(raw.pk, 0);
   inp.pr = int(raw.pr, 0);
+  // 상자 무기: 제안(wo)에 1 = 장착, 2 = 분해
+  inp.wo = int(raw.wo, 0);
+  inp.wk = int(raw.wk, 0);
   return inp;
 }
 
@@ -175,6 +178,7 @@ export class Game {
       fam: {},
       stats: {},
       offers: [],
+      wOffer: null,
       hunter: 0,
       basicN: 0,
       secondT: 0,
@@ -366,7 +370,8 @@ export class Game {
       id: this.mapId,
       name: this.map.name,
       R: this.R,
-      obstacles: this.obstacles.map((o) => [o.x, o.y, o.r, o.k]),
+      obstacles: this.obstacles.map((o) => (o.t != null ? [o.x, o.y, o.r, o.k, o.t] : [o.x, o.y, o.r, o.k])),
+      props: this.map.props || [],
       walls: this.walls,
       bushes: this.bushes.map((b) => [b.x, b.y, b.r]),
       pois: this.map.pois,
@@ -475,6 +480,7 @@ export class Game {
       if (p.buffer.t <= 0) p.buffer = null;
     }
     this.updateOffers(p);
+    this.updateWeaponOffer(p);
     this.updateAugTimers(p, dt);
 
     const pressed = (i) => {
@@ -691,16 +697,50 @@ export class Game {
       this.offerAugment(p, c.kind, randomAugs(this.rng, p.augs.map((g) => g.id)).map((id) => ({ id, tier })));
       if (c.kind === 'titan') {
         const rar = this.rng() < 0.35 ? MYTHIC : MYTHIC - 1;
-        this.dropItem(WEAPON_IDS[Math.floor(this.rng() * WEAPON_IDS.length)], rar, c.x, c.y + 40);
+        this.offerWeapon(p, WEAPON_IDS[Math.floor(this.rng() * WEAPON_IDS.length)], rar);
       }
       return;
     }
     const rar = rollWeaponRarity(this.rng, this.time, c.kind);
     const type = WEAPON_IDS[Math.floor(this.rng() * WEAPON_IDS.length)];
     this.emit({ e: 'chest', id: c.id, x: c.x, y: c.y, r: rar, by: p.id, k: c.kind, w: type });
-    // 상자 앞 (여는 사람 쪽)에 떨어뜨림
-    const a = Math.atan2(p.y - c.y, p.x - c.x);
-    this.dropItem(type, rar, c.x + Math.cos(a) * 50, c.y + Math.sin(a) * 50 + 12);
+    // 연 사람만 받음: 바꿔 들지, 강화석으로 분해할지 창에서 고름
+    this.offerWeapon(p, type, rar);
+  }
+
+  // ---------------- 상자 무기 (본인에게만) ----------------
+  offerWeapon(p, type, rarity) {
+    // 아직 안 고른 무기가 있으면 그건 분해
+    if (p.wOffer) this.dismantle(p, p.wOffer.rarity);
+    p.wOffer = { id: this.nextOffer++, type, rarity, botT: 1.6 };
+  }
+
+  dismantle(p, rarity) {
+    this.gainStones(p, C.DISMANTLE_STONES[rarity] || 0);
+  }
+
+  updateWeaponOffer(p) {
+    const o = p.wOffer;
+    if (!o) return;
+    let pick = 0;
+    if (p.isBot) {
+      o.botT -= C.DT;
+      if (o.botT > 0) return;
+      // 봇: 더 높은 등급(같으면 무기를 안 바꿈)이면 장착, 아니면 분해
+      pick = canTake(p.gear.weapon, o) && o.rarity > p.gear.weapon.rarity ? 1 : 2;
+    } else if (p.input.wo === o.id) pick = p.input.wk;
+    if (pick !== 1 && pick !== 2) return;
+    if (pick === 1 && !canTake(p.gear.weapon, o)) return; // 같은 무기의 낮은 등급은 분해만
+    p.wOffer = null;
+    if (pick === 2) {
+      this.dismantle(p, o.rarity);
+      this.emit({ e: 'dismantle', id: p.id, to: p.id, x: Math.round(p.x), y: Math.round(p.y), n: C.DISMANTLE_STONES[o.rarity] });
+      return;
+    }
+    // 들고 있던 무기는 강화석으로
+    const old = p.gear.weapon;
+    this.equipWeapon(p, o.type, o.rarity);
+    if (old.type !== o.type || old.rarity > 0) this.dismantle(p, old.rarity);
   }
 
   dropItem(type, rarity, x, y) {
@@ -719,8 +759,14 @@ export class Game {
     this.items = this.items.filter((q) => q !== it);
     const old = p.gear.weapon;
     if (old.type !== it.type || old.rarity > 0) this.dropItem(old.type, old.rarity, p.x + 20, p.y + 16);
-    const swap = old.type !== it.type;
-    p.gear.weapon = makeWeapon(it.type, it.rarity);
+    this.equipWeapon(p, it.type, it.rarity);
+    return true;
+  }
+
+  equipWeapon(p, type, rarity) {
+    const old = p.gear.weapon;
+    const swap = old.type !== type;
+    p.gear.weapon = makeWeapon(type, rarity);
     if (swap) {
       p.act = null;
       p.combo = 0;
@@ -730,9 +776,8 @@ export class Game {
       for (const k of ['q', 'w', 'e']) p.cd[k] = Math.min(p.cd[k], 2);
     }
     this.recomputeStats(p);
-    this.emit({ e: 'equip', id: p.id, x: Math.round(p.x), y: Math.round(p.y), w: it.type, r: it.rarity, s: swap ? 1 : 0 });
-    if (it.rarity >= MYTHIC - 1) this.emit({ e: 'legend', global: true, id: p.id, w: it.type, r: it.rarity });
-    return true;
+    this.emit({ e: 'equip', id: p.id, x: Math.round(p.x), y: Math.round(p.y), w: type, r: rarity, s: swap ? 1 : 0 });
+    if (rarity >= MYTHIC - 1) this.emit({ e: 'legend', global: true, id: p.id, w: type, r: rarity });
   }
 
   // ---------------- 강화석 (일반 몹) → 무기 등급 ----------------
@@ -942,6 +987,7 @@ export class Game {
     u.kbx = 0;
     u.kby = 0;
     u.offers = [];
+    u.wOffer = null;
     u.st = makeStatus();
     let killer = src && src.isPlayer && src !== u ? src : null;
     if (!killer && u.lastHitBy && this.time - u.lastHitByT < 8) {
@@ -1446,6 +1492,7 @@ export class Game {
         ack: me.ack,
         st: me.st.stunT > 0 ? 2 : me.st.rootT > 0 ? 1 : 0,
         chn: me.channel ? R((me.channel.t / me.channel.dur) * 100) : -1,
+        wo: me.wOffer ? [me.wOffer.id, WEAPON_IDS.indexOf(me.wOffer.type), me.wOffer.rarity] : null,
         of: me.offers.length ? { id: me.offers[0].id, k: me.offers[0].kind, c: me.offers[0].cards, n: me.offers.length } : null,
         dmg: R(me.dmgDealt),
         co: me.chestsOpened,

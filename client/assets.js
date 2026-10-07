@@ -74,6 +74,7 @@ export const PROJ = {
 
 // 타일셋 안 스프라이트 [파일, x, y, w, h]
 const NAT = 'tiles/TilesetNature.png';
+const HOUSE = 'tiles/TilesetHouse.png';
 export const SPR = {
   treeG: [NAT, 0, 0, 32, 32],
   pine: [NAT, 32, 0, 32, 32],
@@ -99,6 +100,37 @@ export const SPR = {
   flower2: [NAT, 32, 176, 16, 16],
   flower3: [NAT, 48, 176, 16, 16],
   flower6: [NAT, 96, 176, 16, 16],
+  // 지역별 나무·바위
+  snowPine: [NAT, 128, 0, 32, 32],
+  snowPine2: [NAT, 160, 0, 32, 32],
+  snowBush: [NAT, 192, 0, 32, 32],
+  bigWhite: [NAT, 96, 288, 48, 48],
+  bigAutumn: [NAT, 144, 288, 48, 48],
+  bigDead: [NAT, 0, 80, 64, 48],
+  bamboo: [NAT, 176, 128, 16, 48],
+  snowRock: [NAT, 32, 192, 32, 32],
+  // 건물·장식 (TilesetHouse, TilesetElement)
+  houseO: [HOUSE, 0, 0, 64, 48],
+  houseB: [HOUSE, 64, 0, 64, 48],
+  houseOB: [HOUSE, 128, 0, 64, 48],
+  temple: [HOUSE, 192, 0, 64, 48],
+  shop: [HOUSE, 256, 0, 48, 48],
+  shopG: [HOUSE, 304, 0, 64, 48],
+  stoneHouse: [HOUSE, 368, 0, 48, 48],
+  inn: [HOUSE, 416, 0, 48, 48],
+  lodge: [HOUSE, 464, 16, 64, 48],
+  igloo: [HOUSE, 0, 176, 48, 48],
+  igloo2: [HOUSE, 96, 176, 48, 48],
+  tent: [HOUSE, 0, 120, 48, 40],
+  hut: [HOUSE, 48, 128, 48, 32],
+  torii: [HOUSE, 4, 80, 44, 36],
+  dojo: [HOUSE, 64, 64, 32, 16],
+  statueOrb: [HOUSE, 48, 240, 32, 32],
+  statue: [HOUSE, 80, 240, 32, 32],
+  statueFrog: [HOUSE, 48, 272, 32, 32],
+  statueOrbM: [HOUSE, 48, 304, 32, 32],
+  statueM: [HOUSE, 80, 304, 32, 32],
+  lantern: ['tiles/TilesetElement.png', 96, 48, 16, 32],
   chestS0: ['items/LittleTreasureChest.png', 0, 0, 16, 16],
   chestS1: ['items/LittleTreasureChest.png', 16, 0, 16, 16],
   chestB0: ['items/BigTreasureChest.png', 0, 0, 16, 14],

@@ -2,7 +2,7 @@
 import { WEAPONS, WEAPON_IDS, RARITIES, weaponId, skillDesc } from '../shared/items.js';
 import { COSMETICS, COSMETIC_MAP, COSMETIC_TYPES, RARITY_LABEL, RARITY_COLOR } from '../shared/cosmetics.js';
 import { AUG_BY_ID, AUG_TIERS } from '../shared/augments.js';
-import { computeRewards, MAX_PLAYERS, COUNTER_BONUS } from '../shared/constants.js';
+import { computeRewards, MAX_PLAYERS } from '../shared/constants.js';
 import { PixelRenderer } from './pixel.js';
 import { Input } from './input.js';
 import { Hud, escapeHtml } from './hud.js';
@@ -180,7 +180,7 @@ function renderWeapons() {
   const w = WEAPONS[profile.d.weapon] || WEAPONS.dagger;
   const beats = WEAPONS[w.beats];
   const lost = Object.values(WEAPONS).find((x) => x.beats === w.id);
-  $('class-info').innerHTML = `<b style="color:${w.color}">${w.icon} ${w.name}</b><br>${w.role}<br>Q ${w.q.name} · W ${w.w.name}<br>E ${w.e.name} · R ${w.r.name}<br><span style="color:#7ed957">강함 → ${beats.name} (피해 +${Math.round(COUNTER_BONUS * 100)}%)</span> · <span style="color:#ff8a8a">약함 ← ${lost.name}</span>`;
+  $('class-info').innerHTML = `<b style="color:${w.color}">${w.icon} ${w.name}</b><br>${w.role}<br>Q ${w.q.name} · W ${w.w.name}<br>E ${w.e.name} · R ${w.r.name}<br><span style="color:#7ed957">강함 → ${beats.name}</span> · <span style="color:#ff8a8a">약함 ← ${lost.name}</span>`;
 }
 
 function renderQuests() {
@@ -277,6 +277,7 @@ async function connect(kind, msg, opts = {}) {
       backToMenu();
     },
   });
+  client.autoAttack = profile.d.settings.autoAttack !== false;
   transport.onmsg = (m) => client && tr === transport && client.handle(m);
   transport.onclose = () => {
     if (client && client.running && !client.ended) {
@@ -327,7 +328,7 @@ $('room-join-go').onclick = () => {
 
 const TIPS = [
   '큰 상자와 현상금 주머니는 높은 등급 무기가 잘 나옵니다.',
-  '단도는 두루마리, 두루마리는 표창, 표창은 단도에게 강합니다 (피해 +10%).',
+  '단도는 두루마리, 두루마리는 표창, 표창은 단도에게 유리한 스킬을 가졌어요. 무기 등급이 높으면 뒤집을 수 있어요.',
   '같은 계열 증강을 2·3개 모으면 세트 효과! 들고 있는 무기 계열은 +1로 쳐요.',
   '에픽 몬스터는 막타를 친 사람이 보물을 얻습니다. 체력 30%가 되면 모두에게 알려져요.',
   '테두리 색이 진한 닌자는 높은 등급 무기를 든 강한 적입니다.',
@@ -395,8 +396,9 @@ function backToMenu() {
   renderMenu();
 }
 
-// 키: 1·2·3 증강 / ←→ 관전 / Esc 메뉴
+// 키: 1·2·3 증강 / F·G 상자 무기 (장착·분해) / ←→ 관전 / Esc 메뉴
 input.onKey = (e) => {
+  if (client && (e.code === 'KeyF' || e.code === 'KeyG') && hud.weaponChoice(client, e.code === 'KeyF' ? 1 : 2)) return true;
   if (client && /^Digit[123]$/.test(e.code)) {
     hud.pick(client, Number(e.code.slice(5)));
     return true;
@@ -683,13 +685,19 @@ $('btn-help').onclick = () => {
     const w = WEAPONS[id];
     const row = (k) => `<br>${k.toUpperCase()} ${w[k].icon || ''} <b>${w[k].name}</b> — ${w[k].hint || w[k].desc}`;
     const tiers = w.tiers.map((t, i) => (t ? `<br><span style="color:${RARITIES[i].color}">${RARITIES[i].name}</span>: ${t.desc}` : '')).join('');
-    return `<div class="hw" style="border-color:${w.color}88"><b style="color:${w.color}">${w.icon} ${w.name}</b> · ${w.role} · <span style="color:#7ed957">${WEAPONS[w.beats].name}에게 강함 (피해 +${Math.round(COUNTER_BONUS * 100)}%)</span>${w.passive ? `<br>패시브 ${w.passive.name}: ${w.passive.desc}` : ''}<br>우클릭: ${w.basic.name} — ${skillDesc(w.basic, true)}${['q', 'w', 'e', 'r'].map(row).join('')}<br><b>등급 효과</b>${tiers}</div>`;
+    return `<div class="hw" style="border-color:${w.color}88"><b style="color:${w.color}">${w.icon} ${w.name}</b> · ${w.role} · <span style="color:#7ed957">${WEAPONS[w.beats].name}에게 강함</span>${w.passive ? `<br>패시브 ${w.passive.name}: ${w.passive.desc}` : ''}<br>우클릭: ${w.basic.name} — ${skillDesc(w.basic, true)}${['q', 'w', 'e', 'r'].map(row).join('')}<br><b>등급 효과</b>${tiers}</div>`;
   }).join('');
   openModal('help');
 };
 $('btn-settings').onclick = () => {
   $('set-shake').checked = profile.d.settings.shake;
+  $('set-auto').checked = profile.d.settings.autoAttack !== false;
   openModal('settings');
+};
+$('set-auto').onchange = () => {
+  profile.d.settings.autoAttack = $('set-auto').checked;
+  profile.save();
+  if (client) client.autoAttack = profile.d.settings.autoAttack;
 };
 $('set-shake').onchange = () => {
   profile.d.settings.shake = $('set-shake').checked;

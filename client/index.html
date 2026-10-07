@@ -67,7 +67,7 @@
       <div class="panel-title">게임 방법</div>
       <ul class="howto">
         <li>해안 <b>은신처 16곳</b> 중 한 곳에서 시작 (어디든 조건이 같아요)</li>
-        <li><b>상자</b>를 열면 등급 뽑기 → <b>무기</b>가 떨어져요 (일반~전설)</li><li>몹이 주는 <b>강화석</b>으로 무기 등급이 올라요</li>
+        <li><b>상자</b>를 열면 등급 뽑기 → 나만 받는 <b>무기</b>: 장착(F) 또는 분해(G)</li><li>몹이 주는 <b>강화석</b>으로 무기 등급이 올라요</li>
         <li>적을 잡으면 그 적의 <b>증강</b>을 빼앗아요 (3칸)</li><li><b>에픽 몬스터</b> 막타 → 보물상자 (신화 무기는 대텐구만!)</li>
         <li>🗡 단도 &gt; 📜 두루마리 &gt; ✴ 표창 &gt; 🗡 단도</li>
       </ul>
@@ -131,6 +131,15 @@
     <div class="offer-hint">숫자 <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> 또는 클릭 · 시간 제한 없음 · <button class="pxbtn small ghost" id="offer-skip">건너뛰기 (강화석 +3)</button></div>
   </div>
 
+  <!-- 상자에서 나온 무기 (나에게만): 장착 / 분해 -->
+  <div id="wbox" class="hidden">
+    <div class="wbox-card" id="wbox-card"></div>
+    <div class="wbox-btns">
+      <button class="pxbtn small" id="wbox-equip"><kbd>F</kbd> 장착</button>
+      <button class="pxbtn small ghost" id="wbox-break"><kbd>G</kbd> 분해 <span id="wbox-stones"></span></button>
+    </div>
+  </div>
+
   <div class="hud-bottom">
     <div class="pxpanel dock">
       <div class="weapon-badge" id="weapon">
@@ -151,7 +160,7 @@
   <div id="landing" class="hidden">
     <div class="land-head"><b>내 시작 지점</b><span id="land-timer">5</span></div>
     <canvas id="landmap" width="560" height="560"></canvas>
-    <div class="land-tip">해안 은신처에서 시작해요 · 은신처 캠프로 강화석을 모으고 안쪽 유적·에픽 둥지로!</div>
+    <div class="land-tip">해안 은신처에서 시작해요 · 캠프로 강화석을 모으고 지역 마을 → 에픽 둥지 → 가운데 도장으로!</div>
   </div>
 
   <!-- 탈락 -->
@@ -250,13 +259,14 @@
   <div class="pxpanel modal">
     <div class="modal-head"><div class="modal-title">조작법</div><button class="x" data-close="help">✕</button></div>
     <div class="keys">
-      <div><kbd>우클릭</kbd> 땅: 이동 · 적: 쫓아가며 자동 공격 · 상자: 가서 열기</div>
+      <div><kbd>우클릭</kbd> 땅: 이동 · 적(근처만 눌러도 됨): 쫓아가며 공격 · 상자: 가서 열기</div>
+      <div><b>자동 공격</b>: 가만히 서 있으면 사거리 안의 적을 알아서 공격 (설정에서 끌 수 있음)</div>
       <div><kbd>A</kbd> + <kbd>좌클릭</kbd> 적: 그 적 공격 · 빈 곳: 근처 적 자동 공격</div>
       <div><kbd>Q</kbd><kbd>W</kbd><kbd>E</kbd> 스킬 · <kbd>R</kbd> 궁극기 (게이지 100%)</div>
-      <div><kbd>D</kbd> 구르기 (커서 방향, 잠깐 무적) · <kbd>S</kbd> 멈춤</div>
-      <div><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> 증강 고르기 · <kbd>←</kbd><kbd>→</kbd> 관전 대상 바꾸기</div>
+      <div><kbd>Space</kbd> 구르기 (커서 방향, 잠깐 무적, <kbd>D</kbd>도 됨) · <kbd>S</kbd> 멈춤</div>
+      <div><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> 증강 고르기 · <kbd>F</kbd> 무기 장착 · <kbd>G</kbd> 무기 분해 · <kbd>←</kbd><kbd>→</kbd> 관전 대상 바꾸기</div>
     </div>
-    <p class="muted">상자는 <b>무기</b>를 줍니다 (일반~전설, 큰 상자·현상금 주머니일수록 높은 등급). 다른 무기는 바꿔 들고, 같은 무기는 더 높은 등급만 집을 수 있어요. 캠프 상자는 몹을 다 잡아야 열립니다. <b>증강</b>은 적 처치(상대 증강 빼앗기)와 에픽 보물에서 나오며 등급은 <b style="color:#c9d4e0">실버</b> · <b style="color:#ffcf4a">골드</b> · <b style="color:#ff7ef2">프리즘</b>. 수풀에 들어가면 멀리 있는 적에게 보이지 않아요.</p>
+    <p class="muted">상자는 연 사람에게만 <b>무기</b>를 줍니다 (일반~전설, 큰 상자·현상금 주머니일수록 높은 등급). <kbd>F</kbd> 장착(들던 무기는 강화석으로) 또는 <kbd>G</kbd> 분해. 같은 무기는 더 높은 등급만 장착할 수 있어요. 쓰러진 닌자의 무기는 바닥에 떨어집니다. 캠프 상자는 몹을 다 잡아야 열립니다. <b>증강</b>은 적 처치(상대 증강 빼앗기)와 에픽 보물에서 나오며 등급은 <b style="color:#c9d4e0">실버</b> · <b style="color:#ffcf4a">골드</b> · <b style="color:#ff7ef2">프리즘</b>. 수풀에 들어가면 멀리 있는 적에게 보이지 않아요.</p>
     <div id="help-weapons" class="help-weapons"></div>
   </div>
 </div>
@@ -265,6 +275,7 @@
   <div class="pxpanel modal small">
     <div class="modal-head"><div class="modal-title">설정</div><button class="x" data-close="settings">✕</button></div>
     <label class="set-row"><input type="checkbox" id="set-shake"> 화면 흔들림</label>
+    <label class="set-row"><input type="checkbox" id="set-auto"> 자동 공격 (가만히 있으면 사거리 안의 적 공격)</label>
   </div>
 </div>
 

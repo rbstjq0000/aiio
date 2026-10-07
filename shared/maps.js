@@ -68,19 +68,36 @@ function room(out, cx, cy, a, w, h, door = 130) {
 // 공정함: 맵 전체가 8방향 회전 + 좌우 대칭이라 16개 시작 지점 모두 주변 구성이 똑같다.
 //   부채꼴 8개(45°) × 각 부채꼴 안에 시작 지점 2개(가운데 축 기준 거울상)
 // 바깥 → 안쪽:
-//   해안 은신처(r 2700~) — 절벽으로 이웃과 나뉜 내 구역: 작은 캠프 + 상자 (초반엔 혼자 성장)
-//   길목 캠프(r 2420, 부채꼴 축) — 같은 부채꼴 이웃과 처음 마주치는 곳
-//   유적(r 2050, 부채꼴 경계) — 옆 부채꼴과 함께 쓰는 큰 상자
-//   에픽 둥지(r 1650, 부채꼴 축) — 이웃 둘이 막타를 다툼
-//   엘리트 캠프(r 1150, 부채꼴 경계) — 큰 상자
-//   중앙 투기장(r 0~560) — 대텐구 (4:00)
+//   해안 은신처(r 5400~) — 절벽으로 이웃과 나뉜 내 구역: 작은 캠프 + 상자 (초반엔 혼자 성장)
+//   길목 캠프(r 4840, 부채꼴 축) — 같은 부채꼴 이웃과 처음 마주치는 곳
+//   마을(r 4100, 부채꼴 축) — 지역마다 하나: 집 4채, 큰 상자 1 + 작은 상자 4
+//   에픽 둥지(r 3300, 부채꼴 경계) — 옆 지역 사람들과 막타를 다툼
+//   엘리트 캠프(r 2300, 부채꼴 경계) — 큰 상자
+//   중앙 투기장(r 0~1120) — 대텐구 (4:00)
 // 장애물 종류 k: 0 회색 바위, 1 갈색 바위, 2 둥근 나무, 3 침엽수, 4 분홍 나무, 5 연못, 6 그루터기
-// 부채꼴 i는 각도 i×45° ~ (i+1)×45° (화면 기준 0° = 동쪽, 90° = 남쪽). 부채꼴마다 나무 그림만 다름 (충돌 크기는 같음)
-const SECTOR_TREE = [2, 4, 3, 2, 4, 3, 2, 4];
-// 유적은 부채꼴 경계(i×45°)에 있음
-const RUINS = ['동쪽 사원', '남동쪽 신전', '남쪽 사원', '남서쪽 신전', '서쪽 사원', '북서쪽 신전', '북쪽 사원', '북동쪽 신전'];
+// 부채꼴 8개 = 지역 8개. 지형(충돌)은 모두 같고, 그림·바닥색·이름만 다르다 (공정함 유지)
+// 부채꼴 i는 각도 i×45° ~ (i+1)×45° (화면 기준 0° = 동쪽, 90° = 남쪽)
+export const THEMES = [
+  { id: 'sakura', name: '벚꽃 골짜기', village: '벚꽃 마을', ground: [255, 200, 220, 0.16] },
+  { id: 'bamboo', name: '대나무 숲', village: '대나무 사원', ground: [120, 190, 90, 0.18] },
+  { id: 'snow', name: '설산', village: '설원 산장', ground: [236, 244, 255, 0.72] },
+  { id: 'dead', name: '망자의 숲', village: '버려진 묘지', ground: [96, 88, 92, 0.42] },
+  { id: 'autumn', name: '단풍 계곡', village: '단풍 여관', ground: [230, 150, 70, 0.24] },
+  { id: 'pine', name: '소나무 산', village: '산적 야영지', ground: [70, 120, 70, 0.22] },
+  { id: 'canyon', name: '바위 협곡', village: '사막 요새', ground: [222, 186, 120, 0.5] },
+  { id: 'moss', name: '이끼 숲', village: '닌자 도장', ground: [90, 150, 80, 0.1] },
+];
+export function sectorOf(x, y) {
+  const a = (Math.atan2(y, x) + TAU) % TAU;
+  return Math.min(7, Math.floor(a / (TAU / 8)));
+}
+// 장애물 k: 0 회색 바위, 1 갈색 바위, 2 나무(지역마다 그림 다름), 5 연못, 6 그루터기,
+//            7 집, 8 석상, 9 석등, 10 천막(은신처)
 function buildIsland() {
-  const R = 3400;
+  // 지형 배치 반지름 배율 (물체 크기는 그대로, 사이 간격만 넓힘)
+  const K = 2;
+  const L = (r) => Math.round(r * K);
+  const R = L(3400);
   const rng = makeRng(77001);
   const walls = [];
   const pillars = [];
@@ -90,6 +107,7 @@ function buildIsland() {
   const pois = [];
   const lairs = [];
   const spawns = [];
+  const props = []; // 충돌 없는 장식 { x, y, kind } (도리이 등)
   const deg = (d) => (d * Math.PI) / 180;
   const P = (r, a) => polar(r, a).map(Math.round);
   const SEC = deg(45);
@@ -113,11 +131,22 @@ function buildIsland() {
   // 중앙 투기장: 고리 벽(문 8개, 부채꼴 축 방향) + 대텐구
   ringWithGates(
     walls,
-    560,
+    L(560),
     Array.from({ length: 8 }, (_, i) => [deg(22.5) + i * SEC, 0.32]),
   );
   lairs.push({ x: 0, y: 0, kind: 'titan', boss: 'tengu' });
-  pois.push({ x: 0, y: 0, name: '대텐구의 투기장' });
+  pois.push({ x: 0, y: 0, name: '대텐구의 도장' });
+  // 투기장 문마다 도리이, 양옆에 석등
+  for (let i = 0; i < 8; i++) {
+    const ga = deg(22.5) + i * SEC;
+    const [tx, ty] = P(L(560), ga);
+    props.push({ x: tx, y: ty + 30, kind: 'torii' });
+    for (const s2 of [-1, 1]) {
+      const [lx2, ly2] = P(L(560) + 110, ga + s2 * 0.2);
+      pillars.push({ x: lx2, y: ly2, r: 12, k: 9 });
+    }
+  }
+  props.push({ x: 0, y: -230, kind: 'dojo' });
   const bosses = ['frog', 'spirit', 'cyclop', 'slime'];
   const lairNames = { frog: '두꺼비 늪', spirit: '혼령의 샘', cyclop: '악마의 바위', slime: '슬라임 동굴' };
 
@@ -125,45 +154,64 @@ function buildIsland() {
     const b = i * SEC; // 부채꼴 경계
     const ax = b + SEC / 2; // 부채꼴 축
     // 투기장 안쪽: 축마다 작은 상자
-    const [ix, iy] = P(400, ax);
+    const [ix, iy] = P(L(400), ax);
     chests.push({ x: ix, y: iy, kind: 'small' });
     // 엘리트 캠프 (경계, 큰 상자)
-    camp(1150, b, 'elite', 'big');
-    // 에픽 둥지 (축). 마주 보는 둥지는 같은 보스
+    camp(L(1150), b, 'elite', 'big');
+    // 에픽 둥지 (경계): 옆 지역과 함께 다툼. 마주 보는 둥지는 같은 보스
     const boss = bosses[i % 4];
-    const [lx, ly] = P(1650, ax);
+    const [lx, ly] = P(L(1650), b);
     lairs.push({ x: lx, y: ly, kind: 'epic', boss });
     pois.push({ x: lx, y: ly, name: lairNames[boss], lair: 1 });
-    // 유적 (경계): 고리 벽, 문은 바깥쪽 양옆(두 부채꼴 쪽) + 안쪽
-    const [rx, ry] = P(2050, b);
-    const r0 = 190;
-    const gates = [b + Math.PI, b + Math.PI / 2, b - Math.PI / 2];
-    for (let k = 0; k < 12; k++) {
-      const t0 = (k / 12) * TAU;
-      const t1 = ((k + 1) / 12) * TAU;
-      const mid = (t0 + t1) / 2;
-      if (gates.some((g) => Math.abs(Math.atan2(Math.sin(mid - g), Math.cos(mid - g))) < 0.3)) continue;
-      walls.push([Math.round(rx + Math.cos(t0) * r0), Math.round(ry + Math.sin(t0) * r0), Math.round(rx + Math.cos(t1) * r0), Math.round(ry + Math.sin(t1) * r0), WALL]);
+    // 둥지 양옆 석상
+    for (const s2 of [-1, 1]) {
+      const [sx2, sy2] = P(L(1650) + 40, b + s2 * deg(7));
+      pillars.push({ x: sx2, y: sy2, r: 24, k: 8 });
+    }
+    // 마을 (부채꼴 축 = 지역 한가운데): 집 4채가 광장을 둘러쌈. 광장 가운데 큰 상자, 집 앞마다 작은 상자
+    const [rx, ry] = P(L(2050), ax);
+    const ux = Math.cos(ax);
+    const uy = Math.sin(ax);
+    const at = (u, v) => [Math.round(rx + ux * u - uy * v), Math.round(ry + uy * u + ux * v)];
+    for (const [u, v] of [[-260, -250], [-260, 250], [260, -250], [260, 250]]) {
+      const [hx, hy] = at(u, v);
+      pillars.push({ x: hx, y: hy, r: 70, k: 7, t: i });
+      const [cx, cy] = at(u * 0.45, v * 0.45);
+      chests.push({ x: cx, y: cy, kind: 'small' });
+    }
+    for (const [u, v] of [[0, -120], [0, 120]]) {
+      const [lx2, ly2] = at(u, v);
+      pillars.push({ x: lx2, y: ly2, r: 12, k: 9 });
     }
     chests.push({ x: rx, y: ry, kind: 'big' });
-    pois.push({ x: rx, y: ry, name: RUINS[i] });
-    // 안쪽 성벽 (r 1400): 반쪽 부채꼴마다 한 토막, 경계·축 쪽은 열려 있음 → 안쪽으로 가는 문 16개
+    pois.push({ x: rx, y: ry, name: THEMES[i].village });
+    // 안쪽 성벽 (r 2800): 반쪽 부채꼴마다 한 토막, 경계·축 쪽은 열려 있음 → 안쪽으로 가는 문 16개
     for (const [t0, t1] of [[deg(5), deg(17)], [deg(28), deg(40)]]) {
       const n = 3;
-      for (let k = 0; k < n; k++) wallSeg(1400, b + t0 + ((t1 - t0) * k) / n, 1400, b + t0 + ((t1 - t0) * (k + 1)) / n);
+      for (let k = 0; k < n; k++) wallSeg(L(1400), b + t0 + ((t1 - t0) * k) / n, L(1400), b + t0 + ((t1 - t0) * (k + 1)) / n);
     }
     // 길목 캠프 (축): 같은 부채꼴의 두 사람이 처음 만나는 곳
-    camp(2420, ax, 'large');
+    camp(L(2420), ax, 'large');
     // 해안 절벽: 축(같은 부채꼴 두 사람 사이)과 경계(옆 부채꼴과 사이)
-    radialWall(ax, 2620, R + 40);
-    radialWall(b, 2380, R + 40);
+    radialWall(ax, L(2620), R + 40);
+    radialWall(b, L(2380), R + 40);
+    // 들판 캠프·상자: 반쪽 부채꼴마다 하나씩 (유적과 에픽 둥지 사이, 길목과 유적 사이)
+    for (const sgn of [-1, 1]) {
+      camp(L(1950), ax + sgn * deg(12), 'ranged');
+      const [fx, fy] = P(L(2650), ax + sgn * deg(13));
+      chests.push({ x: fx, y: fy, kind: 'small' });
+      camp(L(1350), ax + sgn * deg(13), 'large');
+    }
     // 시작 지점 2곳 (축 기준 거울상) + 각자의 은신처
     for (const sgn of [-1, 1]) {
       const sa = ax + sgn * deg(11.25);
-      spawns.push(P(3020, sa));
+      spawns.push(P(L(3020), sa));
+      // 은신처 천막 (시작 지점 바로 바깥쪽)
+      const [tx2, ty2] = P(L(3020) + 230, sa);
+      pillars.push({ x: tx2, y: ty2, r: 42, k: 10 });
       // 은신처: 작은 캠프(작은 상자) + 상자 하나 + 수풀
-      camp(2780, ax + sgn * deg(6), 'small');
-      const [cx, cy] = P(3150, ax + sgn * deg(16));
+      camp(L(2780), ax + sgn * deg(6), 'small');
+      const [cx, cy] = P(L(3150), ax + sgn * deg(16));
       chests.push({ x: cx, y: cy, kind: 'small' });
     }
   }
@@ -195,13 +243,13 @@ function buildIsland() {
   };
   const T = () => rng() * deg(22.5);
   // 연못: 반쪽마다 1개
-  for (let tries = 0, n = 0; tries < 400 && n < 1; tries++) {
+  for (let tries = 0, n = 0; tries < 600 && n < 2; tries++) {
     const r = Math.round(rng.range(100, 140));
-    if (tryPut(Math.round(rng.range(900, 2300)), T(), r, 140, (s) => pillars.push({ x: Math.round(s.x), y: Math.round(s.y), r, k: 5 }))) n++;
+    if (tryPut(L(rng.range(900, 2300)), T(), r, 140, (s) => pillars.push({ x: Math.round(s.x), y: Math.round(s.y), r, k: 5 }))) n++;
   }
   // 숲: 반쪽마다 나무 무리 5개
-  for (let g = 0; g < 5; g++) {
-    const gd = rng.range(700, 3100);
+  for (let g = 0; g < 15; g++) {
+    const gd = L(rng.range(700, 3100));
     const gt = T();
     const n = 5 + Math.floor(rng() * 5);
     for (let i = 0, put = 0; i < 40 && put < n; i++) {
@@ -209,20 +257,20 @@ function buildIsland() {
       const t = gt + rng.range(-180, 180) / Math.max(400, gd);
       if (t <= 0 || t >= deg(22.5)) continue;
       const r = Math.round(rng.range(20, 26));
-      if (tryPut(d, t, r, 34, (s) => pillars.push({ x: Math.round(s.x), y: Math.round(s.y), r, k: SECTOR_TREE[s.sec] }))) put++;
+      if (tryPut(d, t, r, 34, (s) => pillars.push({ x: Math.round(s.x), y: Math.round(s.y), r, k: 2 }))) put++;
     }
   }
   // 바위·그루터기: 반쪽마다 8개
-  for (let tries = 0, n = 0; tries < 600 && n < 8; tries++) {
+  for (let tries = 0, n = 0; tries < 1500 && n < 26; tries++) {
     const big = rng() < 0.4;
     const r = big ? Math.round(rng.range(28, 38)) : Math.round(rng.range(14, 20));
     const k = big ? (rng() < 0.5 ? 0 : 1) : rng() < 0.5 ? 6 : 0;
-    if (tryPut(Math.round(rng.range(650, 3200)), T(), r, 70, (s) => pillars.push({ x: Math.round(s.x), y: Math.round(s.y), r, k }))) n++;
+    if (tryPut(L(rng.range(650, 3200)), T(), r, 70, (s) => pillars.push({ x: Math.round(s.x), y: Math.round(s.y), r, k }))) n++;
   }
   // 수풀: 반쪽마다 7개 (지나갈 수 있음, 안에 있으면 멀리서 안 보임)
-  for (let tries = 0, n = 0; tries < 800 && n < 7; tries++) {
+  for (let tries = 0, n = 0; tries < 2000 && n < 20; tries++) {
     const r = Math.round(rng.range(44, 70));
-    const d = Math.round(rng.range(650, 3200));
+    const d = L(rng.range(650, 3200));
     const t = T();
     const ok = place(d, t).every((s) => {
       const x = Math.cos(s.a) * d;
@@ -231,7 +279,7 @@ function buildIsland() {
     });
     if (ok && tryPut(d, t, r, 20, (s) => bushes.push({ x: Math.round(s.x), y: Math.round(s.y), r }))) n++;
   }
-  return { id: 'island', name: '숲의 섬', R, walls, pillars, bushes, altars: [], camps, chests, pois, lairs, spawns, zone: { x: 0, y: 0 }, decor: { seed: 77001 }, fixedSpawns: true };
+  return { id: 'island', name: '숲의 섬', R, walls, pillars, bushes, altars: [], camps, chests, pois, lairs, spawns, zone: { x: 0, y: 0 }, decor: { seed: 77001 }, props, fixedSpawns: true };
 }
 
 export const MAPS = {
