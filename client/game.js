@@ -2,9 +2,10 @@
 import * as C from '../shared/constants.js';
 import { stepBody, startDash } from '../shared/physics.js';
 import { NavGrid } from '../shared/nav.js';
-import { WEAPONS, WEAPON_IDS } from '../shared/items.js';
-import { AUG_BY_ID, AUG_TIERS } from '../shared/augments.js';
-import { PROJ_KINDS, AREA_KINDS, PF, CHEST_KINDS, ZONE_STAGE } from '../shared/sim.js';
+import { WEAPONS, WEAPON_IDS, RARITIES } from '../shared/items.js';
+import { AUG_BY_ID, AUG_TIERS, FAMILY_BY_ID } from '../shared/augments.js';
+import { MONSTERS } from '../shared/monsters.js';
+import { PROJ_KINDS, AREA_KINDS, PF, CHEST_KINDS, ZONE_STAGE, LAIR_STATE } from '../shared/sim.js';
 import { COSMETIC_MAP } from '../shared/cosmetics.js';
 
 const NAV_CACHE = new Map();
@@ -19,7 +20,7 @@ function lerpAngle(a, b, t) {
   return a + d * t;
 }
 
-// [id,x,y,aim,hp,maxHp,flags,level,act,actT,weaponIdx,kills,r,augCount,0,shield]
+// [id,x,y,aim,hp,maxHp,flags,augCount,act,actT,weaponIdx,kills,r,famCode,rarity,shield]
 function decodePlayer(a) {
   return {
     id: a[0],
@@ -29,13 +30,14 @@ function decodePlayer(a) {
     hp: a[4],
     maxHp: a[5],
     flags: a[6],
-    level: a[7],
+    augN: a[7],
     act: a[8],
     actT: a[9],
     w: WEAPON_IDS[a[10]] || 'greatsword',
     kills: a[11],
     r: a[12],
-    augN: a[13],
+    fam: a[13],
+    rar: a[14],
     shield: a[15],
   };
 }
@@ -115,6 +117,7 @@ export class GameClient {
       pois: m.map.pois || [],
       decor: m.map.decor,
       camps: (m.map.camps || []).map((c) => ({ id: c[0], x: c[1], y: c[2], type: c[3] })),
+      lairs: (m.map.lairs || []).map((l) => ({ id: l[0], x: l[1], y: l[2], kind: l[3], boss: l[4], bossIdx: MONSTERS[l[4]].idx, state: 'sleep', hp: 0, t: l[3] === 'titan' ? C.TITAN_WAKE : C.EPIC_WAKE })),
       matchTime: m.map.matchTime,
     };
     this.moveTarget = null;
@@ -138,7 +141,8 @@ export class GameClient {
     this.ended = null;
     this.dead = false;
     this.landing = { t: m.map.landTime || C.LANDING_TIME, lx: null, ly: null, chosen: false };
-    this.augPick = { po: 0, pk: 0 };
+    this.augPick = { po: 0, pk: 0, pr: 0 };
+    this.bounties = [];
     this.input.counters = new Array(C.PRESS_N).fill(0);
     this.interactTarget = 0;
     this.atkTarget = 0;
@@ -167,33 +171,36 @@ export class GameClient {
     return performance.now() / 1000 + (this.offset || 0);
   }
 
-  // 착지 단계: 남은 시간만 받음
+  // 착지 단계: 남은 시간과 내 시작 지점 (고정, 서버가 나눠 줌)
   landingSnap(s) {
     if (!this.landing) return;
     this.landing.t = s.lt;
+    if (s.me && s.me.lx != null) {
+      this.landing.lx = s.me.lx;
+      this.landing.ly = s.me.ly;
+      this.landing.chosen = true;
+    }
+    if (s.lr) this.updateLairs(s.lr);
     for (const e of s.ev) this.onEvent(e);
   }
 
-  // 착지 지점 고르기 (착지 화면 지도에서 클릭)
-  chooseLanding(x, y) {
-    if (!this.landing) return;
-    const d = Math.hypot(x, y);
-    const max = this.map.R - 140;
-    if (d > max) {
-      x *= max / d;
-      y *= max / d;
-    }
-    this.landing.lx = Math.round(x);
-    this.landing.ly = Math.round(y);
-    this.landing.chosen = true;
+  // 증강 고르기: i = 카드 1~3 (4 = 건너뛰기), rep = 칸이 꽉 찼을 때 바꿀 칸 1~3
+  pickAugment(i, rep = 0) {
+    const of = this.me && this.me.of;
+    if (!of || i < 1 || (i > of.c.length && i !== 4)) return false;
+    this.augPick = { po: of.id, pk: i, pr: rep };
+    return true;
   }
 
-  // 증강 고르기 (1~3)
-  pickAugment(i) {
-    const of = this.me && this.me.of;
-    if (!of || i < 1 || i > of.ids.length) return false;
-    this.augPick = { po: of.id, pk: i };
-    return true;
+  // 둥지 상태: [id, state, hp%, 남은 시간]
+  updateLairs(lr) {
+    for (const q of lr) {
+      const l = this.map.lairs.find((x) => x.id === q[0]);
+      if (!l) continue;
+      l.state = LAIR_STATE[q[1]];
+      l.hp = q[2];
+      l.t = q[3];
+    }
   }
 
   ingest(s) {
@@ -207,6 +214,7 @@ export class GameClient {
     }
     if (this.offset == null || est > this.offset) this.offset = est;
     else this.offset = this.offset * 0.995 + est * 0.005;
+    this.prevItems = new Set((this.latest ? this.latest.it : []).map((g) => g[0]));
     const snap = {
       tm: s.tm,
       pl: new Map(s.pl.map((a) => [a[0], decodePlayer(a)])),
@@ -214,6 +222,7 @@ export class GameClient {
       pr: s.pr,
       ar: s.ar,
       so: s.so,
+      it: s.it,
       ch: s.ch,
       z: s.z,
       ac: s.ac,
@@ -221,6 +230,8 @@ export class GameClient {
     this.snaps.push(snap);
     if (this.snaps.length > 40) this.snaps.shift();
     this.latest = snap;
+    if (s.lr) this.updateLairs(s.lr);
+    if (s.bt) this.bounties = s.bt;
     if (s.me) {
       const wasAlive = this.me ? this.me.al : 1;
       this.me = s.me;
@@ -231,7 +242,7 @@ export class GameClient {
         if (this.onDeath) this.onDeath(s.me);
       }
       // 고른 증강 제안이 끝났으면 선택 초기화
-      if (this.augPick.po && (!s.me.of || s.me.of.id !== this.augPick.po)) this.augPick = { po: 0, pk: 0 };
+      if (this.augPick.po && (!s.me.of || s.me.of.id !== this.augPick.po)) this.augPick = { po: 0, pk: 0, pr: 0 };
     }
     for (const e of s.ev) this.onEvent(e);
   }
@@ -354,6 +365,13 @@ export class GameClient {
     let target = null;
     if (s) {
       let bd = 70 * 70;
+      for (const g of s.it) {
+        const d = (g[1] - wx) ** 2 + (g[2] - 10 - wy) ** 2;
+        if (d < bd) {
+          bd = d;
+          target = { id: g[0], x: g[1], y: g[2], item: true };
+        }
+      }
       for (const c of s.ch) {
         if (c[3]) continue;
         const d = (c[1] - wx) ** 2 + (c[2] - 10 - wy) ** 2;
@@ -448,7 +466,7 @@ export class GameClient {
     if (this.landing) {
       this.seq++;
       const L = this.landing;
-      this.t.send({ t: 'in', s: this.seq, mx: 0, my: 0, a: 0, k: false, p: this.input.counters.slice(), ...(L.chosen ? { lx: L.lx, ly: L.ly } : {}) });
+      this.t.send({ t: 'in', s: this.seq, mx: 0, my: 0, a: 0, k: false, p: this.input.counters.slice() });
       return;
     }
     const [wx, wy] = this.mouseWorld();
@@ -569,6 +587,7 @@ export class GameClient {
       ti: this.interactTarget,
       po: this.augPick.po,
       pk: this.augPick.pk,
+      pr: this.augPick.pr,
       p,
     });
     if (!alive || !this.pred || !this.ui) return;
@@ -585,7 +604,7 @@ export class GameClient {
     let sp = null;
     if (p[C.PRESS.d] > (this.lastRoll || 0)) {
       this.lastRoll = p[C.PRESS.d];
-      if (me.cd[3] <= 0 && me.st === 0) {
+      if (me.rl > 0 && me.st === 0) {
         const dx = wx - this.pred.x;
         const dy = wy - this.pred.y;
         const len = Math.hypot(dx, dy) || 1;
@@ -633,7 +652,7 @@ export class GameClient {
     requestAnimationFrame(this.frame);
   }
 
-  // 착지 단계 화면: 섬을 천천히 비행하는 시점 (고른 곳이 있으면 그쪽)
+  // 착지 단계 화면: 내 시작 지점 쪽을 비춤
   landingView(dt) {
     const L = this.landing;
     const tx = L.chosen ? L.lx : Math.cos(this.time * 0.15) * 900;
@@ -655,6 +674,8 @@ export class GameClient {
       areas: [],
       souls: [],
       chests: [],
+      items: [],
+      lairs: this.map.lairs,
       meId: this.meId,
       moveMarker: L.chosen ? { x: L.lx, y: L.ly, t: (this.time * 0.6) % 0.45, interact: true } : null,
       serverTime: 0,
@@ -726,6 +747,7 @@ export class GameClient {
       vy: q[5],
       color: q[6] >= 0 ? WEAPONS[WEAPON_IDS[q[6]]].color : '',
       enemy: q[7] !== this.meId,
+      r: q[8] || 8,
     }));
     const snow = this.serverNow();
     const areas = latest.ar.map((a) => ({
@@ -748,7 +770,12 @@ export class GameClient {
       ticks: AREA_KINDS[a[1]] === 'ground' ? 2 : 1,
     }));
     const souls = latest.so.map((o) => ({ id: o[0], x: o[1], y: o[2], v: o[3] }));
-    const chests = latest.ch.map((c) => ({ id: c[0], x: c[1], y: c[2], open: !!c[3], kind: CHEST_KINDS[c[4]] || 'small' }));
+    const chests = latest.ch.map((c) => ({ id: c[0], x: c[1], y: c[2], open: !!c[3], kind: CHEST_KINDS[c[4]] || 'small', locked: !!c[5] }));
+    // 내가 연 상자의 무기는 등급 뽑기 연출이 끝난 뒤에 보여 줌
+    const hide = this.rollHide && performance.now() < this.rollHide.until ? this.rollHide : null;
+    const items = latest.it
+      .filter((g) => !hide || (g[1] - hide.x) ** 2 + (g[2] - hide.y) ** 2 > 110 * 110 || hide.known.has(g[0]))
+      .map((g) => ({ id: g[0], x: g[1], y: g[2], type: WEAPON_IDS[g[3]], rarity: g[4] }));
     const z = latest.z;
     const zone = { active: !!z[0], x: z[1], y: z[2], r: z[3], tx: z[4], ty: z[5], tr: z[6], stage: ZONE_STAGE[z[7]] || 'wait', st: z[8], phase: z[9] };
     // 카메라: 내 위치(또는 관전 대상) + 마우스 방향으로 살짝
@@ -781,6 +808,9 @@ export class GameClient {
       areas,
       souls,
       chests,
+      items,
+      lairs: this.map.lairs,
+      bounties: this.bounties,
       meId: this.meId,
       walls: this.map.walls,
       camps: this.map.camps,
@@ -939,10 +969,6 @@ export class GameClient {
         R.anim('slash3', e.x, e.y - 14, { dur: 0.35, scale: 2, rot: Math.PI / 2 });
         R.shake(12 * this.near(e.x, e.y));
         break;
-      case 'reset':
-        if (isMe) this.hud.announce('스킬 초기화!', '#ff6b3d', 1.2);
-        R.anim('boost', e.x, e.y - 16, { dur: 0.5 });
-        break;
       case 'passive':
         R.burst(e.x, e.y, '#c56bff', 10, 220, 4, 0.4);
         break;
@@ -1005,23 +1031,55 @@ export class GameClient {
         R.burst(e.x, e.y, col, e.t >= 3 ? 30 : 10, 260, 5, 0.5);
         break;
       }
-      case 'lvl':
-        R.anim('circle', e.x, e.y - 10, { dur: 0.45, scale: 2, add: true });
-        if (isMe) R.text(e.x, e.y - 76, `레벨 ${e.l}`, '#ffe9a8', 20, 1.2);
+      case 'soul':
         break;
       case 'heal':
         if (isMe && e.a >= 20) R.text(e.x, e.y - 40, `+${e.a}`, '#4cff8f', 14, 0.8);
         break;
       case 'chest': {
-        const col = AUG_TIERS[e.r].color;
+        // 무기 상자: 무기 등급 색 / 에픽 보물: 증강 등급 색
+        const col = e.aug ? AUG_TIERS[e.r].color : RARITIES[e.r].color;
         R.anim('spark', e.x, e.y - 20, { dur: 0.5, scale: 2, add: true });
         R.pillar(e.x, e.y, col, 0.9, 40);
         R.burst(e.x, e.y - 10, col, 26, 320, 5, 0.6);
-        if (e.by === this.meId) this.hud.chestRoll(e.r, e.k);
+        if (e.by === this.meId) {
+          this.hud.chestRoll(e.r, e.k, !!e.aug, e.w);
+          // 이미 바닥에 있던 무기는 그대로 보이게 기억
+          const known = this.prevItems || new Set();
+          this.rollHide = { x: e.x, y: e.y, until: this.hud.rollUntil - 150, known };
+        }
         break;
       }
       case 'chestdrop':
         R.anim('spark', e.x, e.y - 14, { dur: 0.5 });
+        break;
+      case 'unlock':
+        R.anim('circle', e.x, e.y - 10, { dur: 0.45, add: true });
+        R.text(e.x, e.y - 50, '열림!', '#ffe36b', 15, 0.8);
+        break;
+      case 'locked':
+        this.hud.announce('캠프 몬스터를 다 잡아야 열려요', '#ffcf4a', 1.4);
+        break;
+      case 'nottake':
+        this.hud.announce('이미 같거나 더 좋은 무기예요', '#c9c9d6', 1.2);
+        break;
+      case 'equip': {
+        const col = RARITIES[e.r].color;
+        R.anim('boost', e.x, e.y - 16, { dur: 0.5, add: true });
+        R.burst(e.x, e.y - 10, col, 14, 200, 4, 0.5);
+        if (isMe) this.hud.announce(`${RARITIES[e.r].name} ${WEAPONS[e.w].name}${e.s ? ' 장착!' : ' 등급 업!'}`, col, 1.6);
+        break;
+      }
+      case 'upgrade': {
+        const col = RARITIES[e.r].color;
+        R.anim('circle', e.x, e.y - 10, { dur: 0.45, scale: 2, add: true });
+        R.pillar(e.x, e.y, col, 0.8, 34);
+        if (isMe) this.hud.announce(`강화석으로 무기 강화! → ${RARITIES[e.r].name}`, col, 2);
+        break;
+      }
+      case 'legend':
+        if (e.id !== this.meId) this.hud.announce(`${this.nameOf(e.id)}님이 ${RARITIES[e.r].name} ${WEAPONS[e.w].name}을(를) 얻었습니다!`, RARITIES[e.r].color, 2.4);
+        else this.hud.announce(`${RARITIES[e.r].name} 무기! 모두에게 빛나 보입니다`, RARITIES[e.r].color, 2.4);
         break;
       case 'offer':
         // 증강 카드는 HUD가 me.of 를 보고 띄움
@@ -1031,14 +1089,43 @@ export class GameClient {
         const col = AUG_TIERS[e.r].color;
         R.anim('boost', e.x, e.y - 16, { dur: 0.6, add: true });
         R.pillar(e.x, e.y, col, 0.8, 34);
-        if (isMe && a) this.hud.announce(`${a.icon} ${a.name}`, col, 1.8);
+        if (isMe && a) this.hud.announce(`${a.icon} ${a.name}${e.l ? ` (${AUG_BY_ID[e.l].name} 대신)` : ''}`, col, 1.8);
         break;
       }
+      case 'augskip':
+        if (isMe) R.text(e.x, e.y - 60, `강화석 +${C.SKIP_STONES}`, '#9fe8ff', 15, 0.9);
+        break;
+      case 'setup': {
+        const f = FAMILY_BY_ID[e.f];
+        if (f) this.hud.announce(`${f.icon} ${f.name} ${e.n}세트! ${e.n === 2 ? f.set2 : f.set3}`, f.color, 2.6);
+        break;
+      }
+      case 'assist':
+        R.text(e.x, e.y - 60, `어시스트! 강화석 +${C.ASSIST_STONES}`, '#9fe8ff', 15, 1);
+        break;
+      case 'steelshield':
+        R.anim('shield', e.x, e.y - 14, { dur: 0.4 });
+        break;
       case 'prism':
-        if (e.id !== this.meId) this.hud.announce(`${this.nameOf(e.id)}님이 프리즘 증강을 뽑았습니다!`, '#ff7ef2', 2.2);
+        if (e.id !== this.meId) this.hud.announce(`${this.nameOf(e.id)}님이 프리즘 증강을 받았습니다!`, '#ff7ef2', 2.2);
+        break;
+      case 'lairwake': {
+        const def = MONSTERS[e.b];
+        this.hud.announce(`${e.k === 'titan' ? '★ ' : ''}${def.name}이(가) 깨어났습니다!`, e.k === 'titan' ? '#ff7ef2' : '#d68bff', 2.6);
+        break;
+      }
+      case 'lairlow':
+        this.hud.announce(`${MONSTERS[e.b].name} 체력 30%! 막타를 노려라`, '#d68bff', 2.4);
+        break;
+      case 'epicdown':
+        this.hud.announce(e.k === this.meId ? '에픽 처치! 보물을 지켜라 (여는 데 3초)' : `${MONSTERS[e.b].name} 처치됨 — 보물이 떨어졌습니다`, '#ff7ef2', 2.6);
+        R.anim('explosion', e.x, e.y - 20, { dur: 0.6, scale: 3 });
+        R.shake(10 * this.near(e.x, e.y));
+        break;
+      case 'lairgone':
         break;
       case 'bounty':
-        if (e.id === this.meId) this.hud.announce(`현상금 ${e.n}킬! 위치가 표시됩니다`, '#ffd54a', 2);
+        if (e.id === this.meId) this.hud.announce(`현상금 ${e.n}킬! 지도에 위치가 표시됩니다`, '#ffd54a', 2);
         else if (e.n === C.BOUNTY_MIN || e.n % 2 === 0) this.hud.announce(`💰 ${this.nameOf(e.id)} 현상금 ${e.n}킬`, '#ffd54a', 2);
         break;
       case 'bountydrop':
@@ -1048,10 +1135,6 @@ export class GameClient {
       case 'chain':
         R.beam(e.x, e.y - 10, e.x2, e.y2 - 10, '#9fe8ff', 5, 0.2);
         R.anim('thunder', e.x2, e.y2 - 16, { dur: 0.3, add: true });
-        break;
-      case 'undying':
-        R.anim('aura', e.x, e.y - 12, { dur: 0.6, scale: 2, add: true });
-        R.text(e.x, e.y - 70, '불사!', '#ffe9a8', 22, 1.2);
         break;
       case 'secondwind':
         R.anim('shield', e.x, e.y - 14, { dur: 0.5, scale: 2 });

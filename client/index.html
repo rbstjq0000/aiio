@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>닌자 로얄</title>
-<meta name="description" content="귀여운 도트 닌자 16명, 8분 배틀로얄. 상자를 열어 증강을 뽑고 최후의 1인이 되세요.">
+<meta name="description" content="도트 닌자 16명, 10분 배틀로얄. 상자에서 무기를, 적과 에픽 몬스터에게서 증강을 얻어 최후의 1인이 되세요.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Jua&family=Noto+Sans+KR:wght@400;700;800&display=swap" rel="stylesheet">
@@ -39,9 +39,9 @@
     </section>
 
     <section class="pxpanel col-center">
-      <div class="tagline">16명 · 8분 · 목숨 1개<br>상자를 열어 <b>증강</b>을 뽑고 최후의 1인이 되세요!</div>
+      <div class="tagline">16명 · 10분 · 목숨 1개<br>상자에서 <b>무기</b>, 적을 잡아 <b>증강</b>을 얻고 최후의 1인이 되세요!</div>
       <input id="name" maxlength="14" placeholder="닉네임" autocomplete="off" spellcheck="false">
-      <div class="panel-title">직업 고르기</div>
+      <div class="panel-title">시작 무기 고르기</div>
       <div id="weapons" class="weapons"></div>
       <button class="btn-play" id="btn-play"><span>게임 시작</span><small id="queue-info">16인 · 빈자리는 봇</small></button>
       <div class="row">
@@ -66,10 +66,10 @@
       <div id="streak" class="streak"></div>
       <div class="panel-title">게임 방법</div>
       <ul class="howto">
-        <li>시작하면 섬 지도에서 <b>내릴 곳</b>을 고르세요</li>
-        <li><b>상자</b>를 열면 등급 뽑기 → <b>증강 3개 중 1개</b></li>
-        <li>킬이 쌓이면 <b>현상금</b>! 잡으면 좋은 상자가 터져요</li>
-        <li><b>자기장</b>이 5번 줄어듭니다. 마지막까지 살아남기!</li>
+        <li>해안 <b>은신처 16곳</b> 중 한 곳에서 시작 (어디든 조건이 같아요)</li>
+        <li><b>상자</b>를 열면 등급 뽑기 → <b>무기</b>가 떨어져요 (일반~전설)</li><li>몹이 주는 <b>강화석</b>으로 무기 등급이 올라요</li>
+        <li>적을 잡으면 그 적의 <b>증강</b>을 빼앗아요 (3칸)</li><li><b>에픽 몬스터</b> 막타 → 보물상자 (신화 무기는 대텐구만!)</li>
+        <li>🗡 단도 &gt; 📜 두루마리 &gt; ✴ 표창 &gt; 🗡 단도</li>
       </ul>
     </section>
   </main>
@@ -123,27 +123,35 @@
   <div id="offer" class="hidden">
     <div class="offer-title" id="offer-title">증강 선택</div>
     <div class="offer-cards" id="offer-cards"></div>
-    <div class="offer-time"><i id="offer-bar"></i></div>
-    <div class="offer-hint">숫자 <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> 또는 클릭 · 싸우면서 골라도 됩니다</div>
+    <div id="offer-replace" class="offer-replace hidden">
+      <div>칸이 꽉 찼어요. <b>바꿀 증강</b>을 고르세요 (<kbd>1</kbd><kbd>2</kbd><kbd>3</kbd>)</div>
+      <div class="rep-slots" id="rep-slots"></div>
+      <button class="pxbtn small ghost" id="rep-cancel">취소</button>
+    </div>
+    <div class="offer-hint">숫자 <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> 또는 클릭 · 시간 제한 없음 · <button class="pxbtn small ghost" id="offer-skip">건너뛰기 (강화석 +3)</button></div>
   </div>
 
   <div class="hud-bottom">
     <div class="pxpanel dock">
-      <canvas id="face" width="76" height="76"></canvas>
+      <div class="weapon-badge" id="weapon">
+        <canvas id="face" width="76" height="76"></canvas>
+        <div class="wb-name" id="wb-name"></div>
+        <div class="weapon-tip" id="weapon-tip"></div>
+      </div>
       <div class="dock-main">
         <div class="hpbar"><div id="hpfill"></div><div id="shieldfill"></div><span id="hptext"></span></div>
-        <div class="xpbar"><div id="xpfill"></div><span id="lvtext"></span></div>
+        <div class="stonebar" title="일반 몹을 잡으면 강화석. 다 모으면 무기 등급이 오릅니다"><div id="stonefill"></div><span id="stonetext"></span></div>
         <div id="skills"></div>
       </div>
     </div>
   </div>
   <div id="ping"></div>
 
-  <!-- 착지 지점 고르기 -->
+  <!-- 시작 지점 (고정, 16곳 모두 같은 구성) -->
   <div id="landing" class="hidden">
-    <div class="land-head"><b>내릴 곳을 고르세요</b><span id="land-timer">10</span></div>
+    <div class="land-head"><b>내 시작 지점</b><span id="land-timer">5</span></div>
     <canvas id="landmap" width="560" height="560"></canvas>
-    <div class="land-tip">지도를 클릭하세요 · 큰 상자는 마을과 유적에 많지만 사람도 많아요</div>
+    <div class="land-tip">해안 은신처에서 시작해요 · 은신처 캠프로 강화석을 모으고 안쪽 유적·에픽 둥지로!</div>
   </div>
 
   <!-- 탈락 -->
@@ -248,7 +256,7 @@
       <div><kbd>D</kbd> 구르기 (커서 방향, 잠깐 무적) · <kbd>S</kbd> 멈춤</div>
       <div><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> 증강 고르기 · <kbd>←</kbd><kbd>→</kbd> 관전 대상 바꾸기</div>
     </div>
-    <p class="muted">상자 등급: <b style="color:#c9d4e0">실버</b> · <b style="color:#ffcf4a">골드</b> · <b style="color:#ff7ef2">프리즘</b>. 큰 상자와 현상금 주머니일수록 좋은 등급이 잘 나옵니다. 수풀에 들어가면 멀리 있는 적에게 보이지 않아요.</p>
+    <p class="muted">상자는 <b>무기</b>를 줍니다 (일반~전설, 큰 상자·현상금 주머니일수록 높은 등급). 다른 무기는 바꿔 들고, 같은 무기는 더 높은 등급만 집을 수 있어요. 캠프 상자는 몹을 다 잡아야 열립니다. <b>증강</b>은 적 처치(상대 증강 빼앗기)와 에픽 보물에서 나오며 등급은 <b style="color:#c9d4e0">실버</b> · <b style="color:#ffcf4a">골드</b> · <b style="color:#ff7ef2">프리즘</b>. 수풀에 들어가면 멀리 있는 적에게 보이지 않아요.</p>
     <div id="help-weapons" class="help-weapons"></div>
   </div>
 </div>

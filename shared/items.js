@@ -1,224 +1,141 @@
-// 장비 데이터: 무기(기본 공격 + QWER) / 갑옷·신발(능력치). 수치는 docs/COMBAT_DESIGN.md 기준
+// 무기 데이터: 단도 · 표창 · 두루마리 (서로 물고 물리는 상성)
+//   단도 → 두루마리 (파고들면 시전이 느린 술사는 못 버팀)
+//   표창 → 단도     (멀리서 깎고 둔화·공중제비로 거리 유지)
+//   두루마리 → 표창 (속박·눈보라로 사수를 묶음)
+// 스킬셋은 무기마다 고정. 등급이 오를수록 특수효과가 하나씩 붙음
+//   고급 = 평타 강화, 희귀 = Q 강화, 영웅 = W 강화, 전설 = E 강화, 신화 = R 변신
 export const RARITIES = [
-  { id: 'common', name: '일반', mult: 1.0, color: '#c9c9d6' },
-  { id: 'uncommon', name: '고급', mult: 1.04, color: '#5fd35f' },
-  { id: 'rare', name: '희귀', mult: 1.08, color: '#4da3ff' },
-  { id: 'epic', name: '영웅', mult: 1.12, color: '#c56bff' },
-  { id: 'legend', name: '전설', mult: 1.17, color: '#ffb340' },
+  { id: 'common', name: '일반', mult: 1.0, cd: 1.0, color: '#c9c9d6' },
+  { id: 'uncommon', name: '고급', mult: 1.04, cd: 1.0, color: '#5fd35f' },
+  { id: 'rare', name: '희귀', mult: 1.08, cd: 0.95, color: '#4da3ff' },
+  { id: 'epic', name: '영웅', mult: 1.12, cd: 0.9, color: '#c56bff' },
+  { id: 'legend', name: '전설', mult: 1.16, cd: 0.85, color: '#ffa53d' },
+  { id: 'mythic', name: '신화', mult: 1.2, cd: 0.8, color: '#ff3d5a' },
 ];
+export const MYTHIC = 5;
+// 등급별로 강화되는 칸
+export const TIER_SLOT = [null, 'basic', 'q', 'w', 'e', 'r'];
+// 강화석: 이만큼 모이면 들고 있는 무기 등급 +1 (전설까지. 신화는 큰 에픽 보물에서만)
+export const STONE_COST = [8, 14, 22, 32];
 
 // 스킬 type 목록 (combat.js에서 실행)
-// melee 부채꼴 근접(combo) / proj 투사체 / fan 부채꼴 다발 투사체 / spin 주변 반복 타격
-// leap 지점 도약 후 착지 범위 / line 직선 지연 충격파 / dashstrike 돌진(지나간 적 타격)
-// cone 즉시 부채꼴 / ground 지점 지연 범위 / field 지속 장판 / ring 내 주변 지연 범위
-// nova 즉시 내 주변 범위 / execute 적 등 뒤로 순간이동 / backflip 뒤로 도약 + 투사체
-// blinkskill 지점 순간이동(+출발지 장판)
-
+// melee 부채꼴 근접(combo) / proj 투사체 / fan 부채꼴 다발 투사체 / nova 즉시 내 주변 범위
+// ground 지점 지연 범위 / field 지속 장판 / blinkskill 지점 순간이동 / backflip 뒤로 도약 + 투사체
+// shadow 그림자 분신 / mark 적 뒤로 순간이동 + 표식
 export const SKILL_KEYS = ['q', 'w', 'e', 'r'];
 
-// 롤 챔피언들의 메커니즘을 참고한 6개 직업 (이름·그림은 사용하지 않음)
-// up[3] = 영웅 등급, up[4] = 전설 등급에서 붙는 고유 강화 (수치를 덮어씀, upDesc가 설명)
 export const WEAPONS = {
-  greatsword: {
-    id: 'greatsword',
-    name: '대검',
-    icon: '⚔',
-    role: '근접 브루저',
-    color: '#ff8a4d',
-    range: 100,
-    hp: 1.12, // 근접은 붙기 전에 맞으니 체력이 더 많음 (롤의 근접 챔피언처럼)
-    basic: {
-      name: '베기',
-      type: 'melee',
-      moveMult: 0.35,
-      comboWindow: 0.45,
-      combo: [
-        { dmg: 62, range: 100, arc: 2.3, windup: 0.08, dur: 0.38, lunge: 35, knock: 80 },
-        { dmg: 62, range: 100, arc: 2.3, windup: 0.08, dur: 0.38, lunge: 35, knock: 80 },
-        { dmg: 100, range: 112, arc: 2.9, windup: 0.13, dur: 0.55, lunge: 70, knock: 420 },
-      ],
-    },
-    q: {
-      name: '회오리 도끼', icon: '🌀', type: 'ring', delay: 0.3, r: 185, dmg: 110, outer: { r0: 115, mult: 1.5 }, heal: 60, dur: 0.35, moveMult: 0.5, cd: 8,
-      hint: '0.3초 뒤 주변을 휩씀. 바깥쪽 고리에 맞으면 1.5배 + 체력 회복',
-      up: { 3: { dot: { dmg: 50, t: 3 }, upDesc: '출혈: 3초간 50 추가 피해' }, 4: { twice: true, upDesc: '한 번 더 회전 (60% 피해)' } },
-    },
-    w: {
-      name: '결정타', icon: '💥', type: 'empower', haste: 0.45, hasteT: 2, bonus: 90, slow: { amt: 0.4, t: 1 }, window: 4, cd: 7,
-      hint: '이동 속도가 빨라지고, 다음 기본 공격이 강해짐',
-      up: { 3: { stun: 0.5, upDesc: '강화 공격이 0.5초 기절' }, 4: { resetOnKill: true, bonus: 115, upDesc: '피해 증가, 처치하면 쿨타임 초기화' } },
-    },
-    e: {
-      name: '포획', icon: '🪝', type: 'pull', windup: 0.25, dur: 0.4, range: 320, arc: 1.2, dmg: 40, slow: { amt: 0.4, t: 1 }, moveMult: 0.3, cd: 9,
-      hint: '앞쪽 부채꼴의 적을 내 앞으로 끌어당김',
-      up: { 3: { range: 400, upDesc: '사거리 +80' }, 4: { stun: 0.4, upDesc: '끌려온 적 0.4초 기절' } },
-    },
-    r: { name: '단두대', icon: '🪓', type: 'execute', range: 460, dmg: 220, missing: 0, bleedBonus: 0.2, ultRefund: 100, trueDmg: true, hint: '적에게 뛰어올라 내리찍음. 출혈 중첩당 피해 +20%, 처치하면 즉시 다시 사용 가능' },
-    passive: { name: '출혈', desc: '기본 공격과 스킬이 출혈을 쌓음 (최대 5중첩, 중첩당 초당 6 피해, 5초)', bleed: { per: 6, t: 5, max: 5 } },
-  },
-  daggers: {
-    id: 'daggers',
-    name: '쌍단검',
+  dagger: {
+    id: 'dagger',
+    name: '단도',
     icon: '🗡',
-    role: '암살자',
+    role: '근접 암살',
     color: '#b28cff',
-    range: 78,
-    hp: 1.05,
+    range: 80,
+    hp: 1.16, // 근접은 붙기 전에 맞으니 체력이 더 많음
     speed: 1.08,
+    family: 'shadow', // 무기 공명: 🌑그림자 증강
+    beats: 'scroll',
     basic: {
       name: '연속 찌르기',
       type: 'melee',
       moveMult: 0.7,
       comboWindow: 0.3,
       combo: [
-        { dmg: 42, range: 78, arc: 1.7, windup: 0.05, dur: 0.27, lunge: 20, knock: 30 },
-        { dmg: 42, range: 78, arc: 1.7, windup: 0.05, dur: 0.27, lunge: 20, knock: 30 },
+        { dmg: 48, range: 80, arc: 1.7, windup: 0.05, dur: 0.27, lunge: 20, knock: 30 },
+        { dmg: 48, range: 80, arc: 1.7, windup: 0.05, dur: 0.27, lunge: 20, knock: 30 },
       ],
     },
-    q: {
-      name: '면도날 수리검', icon: '✴', type: 'proj', windup: 0.08, dur: 0.22, speed: 1400, range: 820, dmg: 130, r: 10, pierce: 99, fromShadows: true, cd: 6,
-      hint: '나와 그림자들이 동시에 커서 쪽으로 관통 수리검을 던짐',
-      up: { 3: { dmg: 150, upDesc: '피해 증가' }, 4: { cd: 4.5, upDesc: '쿨타임 4.5초' } },
-    },
-    w: {
-      name: '살아있는 그림자', icon: '👤', type: 'shadow', range: 650, t: 5, cd: 16,
-      hint: '그림자를 보냄. 그림자도 Q·E를 따라 씀. 5초 안에 W를 다시 누르면 그림자와 자리를 바꿈',
-      up: { 3: { range: 760, upDesc: '사거리 +110' }, 4: { cd: 12, upDesc: '쿨타임 12초' } },
-    },
-    e: {
-      name: '그림자 베기', icon: '🌀', type: 'nova', windup: 0.05, dur: 0.2, r: 165, dmg: 100, fromShadows: true, shadowSlow: { amt: 0.35, t: 1.5 }, hitRefund: { w: 2 }, moveMult: 1, cd: 4.5,
-      hint: '나와 그림자 주변을 벰. 그림자에 맞으면 둔화, 적중할 때마다 W 쿨타임 2초 감소',
-      up: { 3: { r: 195, upDesc: '범위 확대' }, 4: { dmg: 125, hitRefund: { w: 3 }, upDesc: '피해 증가 + W 쿨 감소 3초' } },
-    },
-    r: { name: '죽음의 표식', icon: '☠', type: 'mark', range: 520, dmg: 80, markT: 3, markPct: 0.6, t: 6, hint: '적 뒤로 순간이동(잠깐 무적)하고 표식. 3초 뒤 그동안 준 피해의 60%가 한 번 더 터짐. 원래 자리에 그림자가 남아 R로 돌아갈 수 있음' },
-    passive: { name: '약자 멸시', desc: '체력 50% 미만인 적을 기본 공격하면 최대 체력의 8% 추가 피해 (대상마다 8초에 한 번)', lowHp: 0.5, pct: 0.08, cd: 8 },
+    q: { name: '수리검', icon: '✴', type: 'proj', windup: 0.08, dur: 0.22, speed: 1400, range: 760, dmg: 130, r: 10, pierce: 99, fromShadows: true, cd: 6, hint: '나와 그림자들이 커서 쪽으로 관통 수리검을 던짐' },
+    w: { name: '그림자 분신', icon: '👤', type: 'shadow', range: 650, t: 5, cd: 15, hint: '그림자를 보냄. 그림자도 Q·E를 따라 씀. 5초 안에 W를 다시 누르면 그림자와 자리를 바꿈' },
+    e: { name: '그림자 베기', icon: '🌀', type: 'nova', windup: 0.05, dur: 0.2, r: 165, dmg: 120, fromShadows: true, shadowSlow: { amt: 0.35, t: 1.5 }, hitRefund: { w: 2 }, moveMult: 1, cd: 4.5, hint: '나와 그림자 주변을 벰. 그림자에 맞으면 둔화, 맞힐 때마다 W 쿨타임 2초 감소' },
+    r: { name: '죽음의 표식', icon: '☠', type: 'mark', range: 520, dmg: 80, markT: 3, markPct: 0.6, t: 6, hint: '적 뒤로 순간이동(잠깐 무적)하고 표식. 3초 뒤 그동안 준 피해의 60%가 한 번 더 터짐' },
+    passive: { name: '약자 멸시 · 그림자 탈출', desc: '체력 50% 미만인 적을 기본 공격하면 최대 체력의 8% 추가 피해 (대상마다 8초에 한 번). 기절·속박 시간 -25%', lowHp: 0.5, pct: 0.08, cd: 8, tenacity: 0.25 },
+    tiers: [
+      null,
+      { o: { combo: [{ dmg: 44, range: 80, arc: 1.7, windup: 0.05, dur: 0.27, lunge: 20, knock: 30 }, { dmg: 44, range: 80, arc: 1.7, windup: 0.05, dur: 0.27, lunge: 20, knock: 30 }, { dmg: 72, range: 92, arc: 2.0, windup: 0.08, dur: 0.36, lunge: 45, knock: 160 }] }, desc: '평타 3번째 찌르기가 강해짐' },
+      { o: { dmg: 140, slow: { amt: 0.25, t: 1.2 } }, desc: '수리검 피해 증가 + 둔화' },
+      { o: { range: 780, cd: 12 }, desc: '분신 사거리 증가 + 쿨타임 12초' },
+      { o: { dmg: 120, r: 190, hitRefund: { w: 3 } }, desc: '그림자 베기 범위·피해 증가, W 쿨 감소 3초' },
+      { o: { markPct: 1.0, dmg: 140 }, desc: '표식 폭발이 그동안 준 피해의 100%' },
+    ],
   },
-  longbow: {
-    id: 'longbow',
-    name: '장궁',
-    icon: '🏹',
-    role: '원거리 딜러',
+  shuriken: {
+    id: 'shuriken',
+    name: '표창',
+    icon: '✴',
+    role: '원거리 견제',
     color: '#8cff6b',
-    range: 760,
-    basic: { name: '사격', type: 'proj', windup: 0.1, dur: 0.5, moveMult: 0.85, speed: 1200, range: 760, dmg: 76, r: 7, knock: 60 },
-    q: {
-      name: '신비한 화살', icon: '➶', type: 'proj', windup: 0.12, dur: 0.3, speed: 1750, range: 950, dmg: 150, r: 9, refundAll: 1, cd: 5,
-      hint: '빠르고 가는 화살. 맞히면 모든 스킬 쿨타임 1초 감소',
-      up: { 3: { slow: { amt: 0.25, t: 1.5 }, dmg: 170, upDesc: '피해 증가 + 둔화' }, 4: { pierce: 1, upDesc: '첫 적을 꿰뚫고 하나 더 맞힘' } },
-    },
-    w: {
-      name: '일제 사격', icon: '🎯', type: 'fan', windup: 0.12, dur: 0.3, count: 7, spread: 0.9, speed: 1100, range: 620, dmg: 45, r: 7, slow: { amt: 0.25, t: 1.5 }, cd: 8,
-      hint: '부채꼴로 화살 7발, 맞은 적 둔화',
-      up: { 3: { count: 9, spread: 1.05, upDesc: '화살 9발' }, 4: { slow: { amt: 0.45, t: 1.5 }, dmg: 55, upDesc: '둔화 45% + 피해 증가' } },
-    },
-    e: {
-      name: '비전 이동', icon: '✨', type: 'blinkskill', range: 360, bolt: { range: 650, dmg: 90 }, cd: 11,
-      hint: '짧게 순간이동하고 가장 가까운 적에게 유도탄 발사',
-      up: { 3: { bolt: { range: 800, dmg: 130 }, upDesc: '유도탄 피해·사거리 증가' }, 4: { cd: 6.5, upDesc: '쿨타임 6.5초' } },
-    },
-    r: { name: '정조준 화살', icon: '🏹', type: 'proj', windup: 0.45, dur: 0.6, moveMult: 0.3, speed: 1500, range: 1800, dmg: 280, r: 22, stunByDist: true, hint: '맵을 가로지르는 거대한 화살. 멀리서 맞을수록 오래 기절(최대 1초)' },
+    range: 740,
+    hp: 0.96,
+    speed: 1.0,
+    family: 'wind', // 🍃바람
+    beats: 'dagger',
+    basic: { name: '표창 던지기', type: 'proj', windup: 0.1, dur: 0.5, moveMult: 0.85, speed: 1250, range: 740, dmg: 70, r: 8, knock: 60 },
+    q: { name: '대형 표창', icon: '✦', type: 'proj', windup: 0.12, dur: 0.3, speed: 1500, range: 900, dmg: 140, r: 12, refundAll: 1, cd: 5, hint: '빠르고 큰 표창. 맞히면 모든 스킬 쿨타임 1초 감소' },
+    w: { name: '표창 부채', icon: '🎯', type: 'fan', windup: 0.12, dur: 0.3, count: 7, spread: 0.9, speed: 1100, range: 600, dmg: 42, r: 8, slow: { amt: 0.3, t: 1.2 }, cd: 8, hint: '부채꼴로 표창 7개, 맞은 적 둔화' },
+    e: { name: '공중제비', icon: '🤸', type: 'backflip', dist: 260, time: 0.22, proj: { speed: 1300, range: 650, dmg: 80, r: 9, slow: { amt: 0.3, t: 1 } }, cd: 9, hint: '뒤로 공중제비를 돌며 앞쪽으로 표창 (둔화)' },
+    r: { name: '풍마수리검', icon: '🌀', type: 'proj', windup: 0.3, dur: 0.45, moveMult: 0.4, speed: 1050, range: 700, dmg: 160, r: 26, pierce: 99, ret: true, hint: '거대한 수리검이 날아갔다 돌아옴. 갈 때와 올 때 두 번 맞음' },
+    tiers: [
+      null,
+      { o: { pierce: 1 }, desc: '평타 표창이 1명 관통' },
+      { o: { dmg: 165, slow: { amt: 0.25, t: 1.5 } }, desc: '대형 표창 피해 증가 + 둔화' },
+      { o: { count: 9, spread: 1.05 }, desc: '표창 9개' },
+      { o: { cd: 6, proj: { speed: 1300, range: 650, dmg: 120, r: 9, slow: { amt: 0.4, t: 1 } } }, desc: '공중제비 쿨타임 6초 + 표창 강화' },
+      { o: { fan: 3, spread: 0.55 }, desc: '풍마수리검이 3개로 갈라짐' },
+    ],
   },
-  firestaff: {
-    id: 'firestaff',
-    name: '화염 지팡이',
-    icon: '🔥',
-    role: '광역 마법사',
-    color: '#ff5a1f',
-    range: 650,
-    basic: { name: '불씨', type: 'proj', windup: 0.12, dur: 0.55, moveMult: 0.75, speed: 820, range: 650, dmg: 62, r: 10, dot: { dmg: 35, t: 2 }, knock: 40 },
-    q: {
-      name: '화염구', icon: '☄', type: 'proj', windup: 0.15, dur: 0.3, speed: 1100, range: 780, dmg: 130, r: 13, dot: { dmg: 50, t: 2 }, burnStun: 0.8, cd: 7,
-      hint: '이미 불타는 적이 맞으면 0.8초 기절 (먼저 다른 불로 지져 놓기)',
-      up: { 3: { dot: { dmg: 80, t: 3 }, upDesc: '화상 강화' }, 4: { burnStun: 1.0, splash: 110, upDesc: '기절 1초 + 주변 폭발' } },
-    },
-    w: {
-      name: '불기둥', icon: '🔥', type: 'ground', range: 680, r: 120, delay: 0.65, ticks: 1, dmg: 170, dot: { dmg: 40, t: 2 }, burnBonus: 0.3, cd: 7.5, dur: 0.25,
-      hint: '0.65초 뒤 불기둥. 불타는 적에게 30% 추가 피해',
-      up: { 3: { r: 150, upDesc: '범위 확대' }, 4: { burnBonus: 0.45, upDesc: '불타는 적 추가 피해 45%' } },
-    },
-    e: {
-      name: '화염 확산', icon: '💢', type: 'conflag', range: 620, dmg: 95, dot: { dmg: 40, t: 2 }, spread: 300, cd: 8,
-      hint: '커서 근처 적을 바로 태움. 이미 불타던 적이면 주변 적에게도 번짐',
-      up: { 3: { dmg: 125, upDesc: '피해 증가' }, 4: { spread: 420, cd: 7.5, upDesc: '번지는 범위 확대 + 쿨타임 7.5초' } },
-    },
-    r: { name: '불길의 폭주', icon: '🌋', type: 'bounce', range: 700, dmg: 130, bounces: 5, bounceR: 520, dot: { dmg: 40, t: 2 }, hint: '적에게 불덩이를 던짐. 주변 적 사이를 5번 튕김 (적이 하나면 그 적에게 계속 돌아옴)' },
-  },
-  froststaff: {
-    id: 'froststaff',
-    name: '서리 지팡이',
-    icon: '❄',
-    role: '군중 제어',
-    color: '#8fe3ff',
-    range: 650,
-    basic: { name: '얼음 화살', type: 'proj', windup: 0.1, dur: 0.5, moveMult: 0.75, speed: 880, range: 650, dmg: 86, r: 9, chill: 0.04, knock: 30 },
-    q: {
-      name: '서리 속박', icon: '⛓', type: 'proj', windup: 0.2, dur: 0.4, speed: 1150, range: 850, dmg: 170, r: 14, root: 0.75, cd: 8,
-      hint: '첫 적중 대상을 0.75초 속박',
-      up: { 3: { range: 1000, r: 18, upDesc: '사거리·폭 증가' }, 4: { pierce: 1, rootAll: true, upDesc: '두 명까지 꿰뚫고 모두 속박' } },
-    },
-    w: {
-      name: '서리 고리', icon: '❅', type: 'ring', delay: 0.4, r: 170, dmg: 120, root: 0.5, cd: 11, dur: 0.35, moveMult: 0.3,
-      hint: '0.4초 뒤 내 주변 적 속박',
-      up: { 3: { r: 210, upDesc: '범위 확대' }, 4: { shieldSelf: 160, upDesc: '시전 시 보호막 160' } },
-    },
-    e: {
-      name: '얼음 미끄럼', icon: '⛸', type: 'dashstrike', dist: 260, time: 0.2, dmg: 0, width: 0, cd: 10,
-      hint: '빠르게 미끄러져 이동',
-      up: { 3: { shield: 120, upDesc: '보호막 120' }, 4: { cd: 6, upDesc: '쿨타임 6초' } },
-    },
-    r: { name: '눈보라', icon: '🌨', type: 'field', range: 620, r: 230, t: 4, every: 0.5, dmg: 52, slow: { amt: 0.35, t: 0.6 }, freezeAfter: 2, freeze: 1, dur: 0.3, hint: '4초간 눈보라. 2초 넘게 머물면 빙결' },
-  },
-  spear: {
-    id: 'spear',
-    name: '창',
-    icon: '🔱',
-    role: '돌격',
-    color: '#ffe066',
-    range: 150,
-    hp: 1.1,
-    speed: 1.03,
-    basic: {
-      name: '찌르기',
-      type: 'melee',
-      moveMult: 0.45,
-      comboWindow: 0.35,
-      combo: [{ dmg: 88, range: 150, arc: 0.55, windup: 0.09, dur: 0.48, lunge: 30, knock: 90 }],
-    },
-    q: {
-      name: '용의 일격', icon: '🐉', type: 'line', windup: 0.22, len: 340, width: 56, dmg: 140, dur: 0.38, moveMult: 0.2, flagDash: true, cd: 6,
-      hint: '앞을 찌름. 찌르는 방향에 내 깃발이 있으면 깃발까지 돌진하며 적을 띄움(0.6초 기절)',
-      up: { 3: { len: 400, upDesc: '사거리 +60' }, 4: { dmg: 190, slow: { amt: 0.3, t: 1.5 }, upDesc: '피해 증가 + 둔화' } },
-    },
-    w: {
-      name: '황금 방패', icon: '🛡', type: 'aegis', r: 300, shield: 140, perEnemy: 40, slow: { amt: 0.3, t: 1.5 }, cd: 9,
-      hint: '보호막을 얻고 주변 적을 둔화. 주변 적이 많을수록 보호막이 커짐',
-      up: { 3: { shield: 190, upDesc: '보호막 증가' }, 4: { cd: 6.5, upDesc: '쿨타임 6.5초' } },
-    },
-    e: {
-      name: '군기', icon: '🚩', type: 'flag', range: 520, r: 90, dmg: 80, t: 6, cd: 10,
-      hint: '깃발을 던져 꽂음(6초). Q로 깃발까지 돌진 가능',
-      up: { 3: { slow: { amt: 0.4, t: 1.5 }, upDesc: '깃발 꽂힌 곳 둔화' }, 4: { cd: 6, upDesc: '쿨타임 6초' } },
-    },
-    r: { name: '격투장', icon: '⛓', type: 'arena', range: 620, air: 0.35, r: 140, dmg: 240, arenaR: 310, t: 3.5, hint: '지점으로 뛰어들어 착지 피해, 주변에 벽을 세워 3.5초 동안 안에 있는 적이 못 나가게 가둠' },
+  scroll: {
+    id: 'scroll',
+    name: '두루마리',
+    icon: '📜',
+    role: '인술 · 묶고 광역',
+    color: '#ff7a3d',
+    range: 740,
+    hp: 0.92, // 몸이 약한 대신 멀리서 묶음
+    speed: 1.0,
+    family: 'fire', // 🔥화염
+    beats: 'shuriken',
+    basic: { name: '불씨', type: 'proj', windup: 0.12, dur: 0.55, moveMult: 0.7, speed: 860, range: 740, dmg: 64, r: 10, dot: { dmg: 32, t: 2 } },
+    q: { name: '화염구', icon: '☄', type: 'proj', windup: 0.15, dur: 0.3, speed: 1300, range: 950, dmg: 135, r: 15, dot: { dmg: 50, t: 2 }, burnStun: 0.6, cd: 6, hint: '이미 불타는 적이 맞으면 0.6초 기절 (먼저 불씨로 지져 놓기)' },
+    w: { name: '서리 속박', icon: '⛓', type: 'proj', windup: 0.2, dur: 0.4, speed: 1400, range: 1000, dmg: 140, r: 16, root: 0.9, cd: 8, hint: '첫 적중 대상을 0.9초 속박' },
+    e: { name: '순간이동', icon: '✨', type: 'blinkskill', range: 320, cd: 15, hint: '커서 쪽으로 짧게 순간이동' },
+    r: { name: '눈보라', icon: '🌨', type: 'field', range: 620, r: 230, t: 4, every: 0.5, dmg: 50, slow: { amt: 0.35, t: 0.6 }, freezeAfter: 2, freeze: 1, dur: 0.3, hint: '4초간 눈보라. 2초 넘게 머물면 빙결' },
+    tiers: [
+      null,
+      { o: { dot: { dmg: 40, t: 2 } }, desc: '불씨 화상 강화' },
+      { o: { burnStun: 0.8, splash: 110 }, desc: '화염구 기절 0.8초 + 주변 폭발' },
+      { o: { pierce: 1, rootAll: true }, desc: '서리 속박이 2명까지 꿰뚫고 모두 속박' },
+      { o: { cd: 10, burn: { r: 70, every: 0.5, dmg: 40, t: 2 } }, desc: '순간이동 쿨타임 10초 + 출발지 불바닥' },
+      { o: { r: 300, freezeAfter: 1.5 }, desc: '눈보라 범위 확대 + 1.5초면 빙결' },
+    ],
   },
 };
 export const WEAPON_IDS = Object.keys(WEAPONS);
+export const DEFAULT_WEAPON = 'dagger';
+// 예전 직업 이름 → 새 무기 (저장된 프로필 호환)
+export function weaponId(id) {
+  if (WEAPONS[id]) return id;
+  if (id === 'longbow') return 'shuriken';
+  if (id === 'firestaff' || id === 'froststaff') return 'scroll';
+  return DEFAULT_WEAPON;
+}
 
-// 등급이 반영된 스킬 정의 (영웅 3, 전설 4에서 고유 강화가 덮어씀)
+// 등급이 반영된 스킬 정의 (등급 효과를 차례로 덮어씀)
 export function skillAt(w, key, grade = 0) {
-  const sk = w[key];
-  if (!sk.up) return sk;
-  let out = sk;
-  for (const g of [3, 4]) if (grade >= g && sk.up[g]) out = { ...out, ...sk.up[g] };
+  let out = w[key];
+  for (let g = 1; g <= grade && g < w.tiers.length; g++) {
+    const t = w.tiers[g];
+    if (t && TIER_SLOT[g] === key) out = { ...out, ...t.o };
+  }
   return out;
 }
 
 const pct = (v) => `${Math.round(v * 100)}%`;
 const extra = (sk) => {
   let t = '';
-  if (sk.dot) t += ` + ${sk.dot.t}초간 ${sk.dot.dmg} 지속 피해`;
+  if (sk.dot) t += ` + ${sk.dot.t}초간 ${sk.dot.dmg} 화상`;
   if (sk.slow) t += ` + 둔화 ${pct(sk.slow.amt)}`;
-  if (sk.chill) t += ` + 둔화 ${pct(sk.chill)} 중첩(최대 30%)`;
   if (sk.stun) t += ` + 기절 ${sk.stun}초`;
   if (sk.root) t += ` + 속박 ${sk.root}초`;
   return t;
@@ -228,124 +145,54 @@ const extra = (sk) => {
 export function skillDesc(sk, isBasic = false) {
   switch (sk.type) {
     case 'melee':
-      if (sk.combo.length === 1) return `${sk.combo[0].dur}초마다 ${sk.combo[0].dmg}, 사거리 ${sk.combo[0].range}`;
       return `${sk.combo.length}연타 ${sk.combo.map((c) => c.dmg).join(' / ')}, 사거리 ${sk.combo[0].range}`;
     case 'proj':
-      return `${isBasic ? `${sk.dur}초마다 ` : sk.windup >= 0.3 ? `${sk.windup}초 준비 후 ` : ''}${sk.pierce ? '관통 ' : ''}투사체 ${sk.dmg}${extra(sk)}, 사거리 ${sk.range}`;
-    case 'spin':
-      return `${sk.dur}초간 주변 반경 ${sk.r}에 ${sk.hits}회 × ${sk.dmg}`;
-    case 'leap':
-      return `최대 ${sk.range} 도약, 착지 반경 ${sk.r}에 ${sk.dmg}${extra(sk)}`;
-    case 'line':
-      return `${sk.windup}초 준비 후 길이 ${sk.len} 충격파 ${sk.dmg}${extra(sk)}`;
-    case 'dashstrike':
-      if (!sk.dmg) return `${sk.dist} 빠르게 이동`;
-      return `${sk.dist} 돌진, 지나간 적에게 ${sk.dmg}${sk.knock ? ' + 넉백(벽꿍)' : ''}${sk.shield ? ` + 보호막 ${sk.shield}` : ''}`;
-    case 'cone':
-      return `앞 부채꼴(${sk.range}) ${sk.dmg}${extra(sk)}`;
-    case 'ground':
-      return `${sk.delay}초 뒤 반경 ${sk.r}에 ${sk.ticks > 1 ? `${sk.ticks}회 × ${sk.dmg}` : sk.dmg}${extra(sk)}${sk.after ? ` + ${sk.after.t}초 불바닥(0.5초마다 ${sk.after.dmg})` : ''}`;
+      return `${isBasic ? `${sk.dur}초마다 ` : ''}${sk.fan ? `${sk.fan}갈래 ` : ''}${sk.pierce ? '관통 ' : ''}${sk.ret ? '왕복 ' : ''}투사체 ${sk.dmg}${extra(sk)}, 사거리 ${sk.range}`;
+    case 'fan':
+      return `${sk.count}발 부채꼴, 발당 ${sk.dmg}${extra(sk)}, 사거리 ${sk.range}`;
+    case 'nova':
+      return `주변 반경 ${sk.r}에 ${sk.dmg}${extra(sk)}`;
     case 'field':
       return `${sk.t}초간 반경 ${sk.r}: ${sk.every}초마다 ${sk.dmg} + 둔화 ${pct(sk.slow.amt)}, ${sk.freezeAfter}초 머물면 빙결 ${sk.freeze}초`;
-    case 'ring':
-      return `${sk.delay}초 뒤 주변 반경 ${sk.r}에 ${sk.dmg}${sk.outer ? ` (바깥쪽 ×${sk.outer.mult})` : ''}${extra(sk)}${sk.heal ? `, 적중당 회복 ${sk.heal}` : ''}`;
-    case 'nova':
-      return `주변 반경 ${sk.r}에 ${sk.dmg}${sk.knock ? ' + 넉백' : ''}${extra(sk)}`;
-    case 'execute':
-      return `${sk.range} 안의 적에게 순간이동, ${sk.dmg}${sk.missing ? ` + 잃은 체력의 ${pct(sk.missing)}` : ''}${sk.bleedBonus ? ` (출혈 중첩당 +${pct(sk.bleedBonus)}, 고정 피해)` : ''}${sk.threshold ? `, 체력 ${pct(sk.threshold)} 이하면 즉사` : ''}${sk.ultRefund >= 100 ? ', 처치 시 재사용' : ''}`;
-    case 'fan':
-      return `${sk.count}발 부채꼴 사격, 발당 ${sk.dmg}${extra(sk)}, 사거리 ${sk.range}`;
     case 'blinkskill':
-      return `최대 ${sk.range} 순간이동${sk.burn ? `, 출발 지점 불바닥(0.5초마다 ${sk.burn.dmg})` : ''}${sk.land ? `, 도착 주변 ${sk.land.dmg}` : ''}${sk.bolt ? `, 유도탄 ${sk.bolt.dmg}` : ''}`;
-    case 'empower':
-      return `${sk.hasteT}초간 이동 +${pct(sk.haste)}, 다음 기본 공격 +${sk.bonus}${extra(sk)}`;
-    case 'pull':
-      return `앞 부채꼴(${sk.range}) ${sk.dmg} + 끌어당김${extra(sk)}`;
-    case 'flag':
-      return `깃발 투척(${sk.range}) ${sk.dmg}, ${sk.t}초 유지${extra(sk)}`;
+      return `최대 ${sk.range} 순간이동${sk.burn ? `, 출발 지점 불바닥(0.5초마다 ${sk.burn.dmg})` : ''}`;
+    case 'backflip':
+      return `뒤로 ${sk.dist} 도약 + 표창 ${sk.proj.dmg}${extra(sk.proj)}`;
     case 'shadow':
       return `최대 ${sk.range}에 그림자 (${sk.t}초), 다시 누르면 자리 바꿈`;
     case 'mark':
       return `${sk.range} 안의 적 뒤로 순간이동, ${sk.dmg} + ${sk.markT}초 뒤 그동안 준 피해의 ${pct(sk.markPct)}`;
-    case 'conflag':
-      return `${sk.range} 안 적에게 ${sk.dmg}${extra(sk)}, 불타던 적이면 반경 ${sk.spread}로 번짐`;
-    case 'bounce':
-      return `${sk.dmg} 불덩이, 반경 ${sk.bounceR} 안에서 ${sk.bounces}번 튕김${extra(sk)}`;
-    case 'aegis':
-      return `보호막 ${sk.shield} + 주변 적 하나당 ${sk.perEnemy}, 반경 ${sk.r} 둔화 ${pct(sk.slow.amt)}`;
-    case 'arena':
-      return `최대 ${sk.range} 도약, 착지 ${sk.dmg} + 반경 ${sk.arenaR} 격투장 ${sk.t}초`;
-    case 'backflip':
-      return `뒤로 ${sk.dist} 도약 + 화살 ${sk.proj.dmg}${extra(sk.proj)}`;
     default:
       return '';
   }
 }
-for (const w of Object.values(WEAPONS)) {
-  for (const k of ['basic', ...SKILL_KEYS]) {
-    w[k].desc = skillDesc(w[k], k === 'basic');
-    if (w[k].up) for (const g of [3, 4]) if (w[k].up[g]) w[k].up[g].desc = skillDesc(skillAt(w, k, g), false);
-  }
+
+// 등급별 설명 (툴팁·도감용)
+export function skillInfo(w, key, grade) {
+  const sk = skillAt(w, key, grade);
+  return { ...sk, desc: skillDesc(sk, key === 'basic') };
 }
 
-// 갑옷·신발: 능력치 장비 (등급 배율이 효과에 곱해짐)
-export const ARMORS = {
-  cloth: { id: 'cloth', name: '천 로브', icon: '👘', hpMult: 1.0, speedMult: 1.0, skillDmg: 0.12, desc: '스킬 피해 +12%' },
-  leather: { id: 'leather', name: '가죽 갑옷', icon: '🦺', hpMult: 1.15, speedMult: 1.0, skillDmg: 0, desc: '체력 +15%' },
-  plate: { id: 'plate', name: '판금 갑옷', icon: '🛡', hpMult: 1.3, speedMult: 0.95, skillDmg: 0, desc: '체력 +30%, 이동 -5%' },
-};
-export const ARMOR_IDS = Object.keys(ARMORS);
-
-export const BOOTS = {
-  swift: { id: 'swift', name: '질풍 장화', icon: '👢', speed: 0.08, cdr: 0, dr: 0, desc: '이동 속도 +8%' },
-  phase: { id: 'phase', name: '차원 장화', icon: '🌀', speed: 0.03, cdr: 0.1, dr: 0, desc: '이동 +3%, 스킬 쿨타임 -10%' },
-  iron: { id: 'iron', name: '강철 장화', icon: '🥾', speed: 0.03, cdr: 0, dr: 0.06, desc: '이동 +3%, 받는 피해 -6%' },
-};
-export const BOOT_IDS = Object.keys(BOOTS);
-
-
-// 스킬 각인: 상자에서 나오며 내 직업의 Q/W/E 스킬 등급을 올림 (무기 자체는 판 중에 바뀌지 않음)
-export const SKILL_RUNES = {
-  q: { id: 'q', name: 'Q 스킬 각인', icon: 'Q' },
-  w: { id: 'w', name: 'W 스킬 각인', icon: 'W' },
-  e: { id: 'e', name: 'E 스킬 각인', icon: 'E' },
-};
-// 각인 사용 결과: 더 높은 등급이면 그 등급으로, 같은 등급이면 한 단계 합성 상승, 낮으면 사용 불가(-1)
-export function runeResult(grade, rarity) {
-  if (rarity > grade) return rarity;
-  if (rarity === grade && grade < RARITIES.length - 1) return grade + 1;
-  return -1;
-}
-// 스킬 등급 효과: 피해는 RARITIES.mult, 쿨타임은 아래 배율
-export const GRADE_CD = [1, 1, 0.95, 0.9, 0.85];
-// Q·W·E가 모두 희귀(2) 이상이면 R은 셋 중 가장 낮은 등급 (세트 효과)
-export function ultGrade(g) {
-  const m = Math.min(g.q, g.w, g.e);
-  return m >= 2 ? m : 0;
+export function makeWeapon(type, rarity = 0) {
+  return { kind: 'weapon', type: weaponId(type), rarity };
 }
 
-export const SLOT_KINDS = ['skill', 'armor', 'boots'];
-export const KIND_DEFS = { skill: SKILL_RUNES, weapon: WEAPONS, armor: ARMORS, boots: BOOTS };
-export const KIND_IDS = { skill: ['q', 'w', 'e'], weapon: WEAPON_IDS, armor: ARMOR_IDS, boots: BOOT_IDS };
-export const KIND_NAMES = { skill: '스킬 각인', weapon: '무기', armor: '갑옷', boots: '신발' };
-
-export function itemDef(item) {
-  return item ? KIND_DEFS[item.kind][item.type] : null;
+export function weaponName(item) {
+  return `${RARITIES[item.rarity].name} ${WEAPONS[item.type].name}`;
 }
 
-export function itemName(item) {
-  const d = itemDef(item);
-  return d ? `${RARITIES[item.rarity].name} ${d.name}` : '';
+// 바닥의 무기를 주울 수 있는지: 다른 무기면 교체, 같은 무기면 더 높은 등급일 때만
+export function canTake(cur, item) {
+  return item.type !== cur.type || item.rarity > cur.rarity;
 }
 
-export function makeItem(kind, type, rarity = 0) {
-  return { kind, type, rarity };
-}
-
-// 경과 시간에 따라 좋은 등급이 나올 확률이 올라감
-export function rollRarity(rng, time, bonus = 0) {
-  const k = Math.min(1, time / 480) + bonus;
-  const w = [Math.max(0.05, 0.55 - 0.45 * k), 0.3, 0.1 + 0.2 * k, 0.04 + 0.16 * k, 0.01 + 0.08 * k];
+// 상자에서 나오는 무기 등급: 시간이 갈수록 좋아짐. 큰 상자는 한 단계 좋은 분포
+export function rollWeaponRarity(rng, time, kind = 'small') {
+  const k = Math.min(1, time / 420);
+  // [일반, 고급, 희귀, 영웅, 전설]
+  let w = [0.5 - 0.35 * k, 0.32 - 0.05 * k, 0.13 + 0.15 * k, 0.04 + 0.16 * k, 0.01 + 0.06 * k];
+  if (kind === 'big') w = [0.08, 0.3, 0.32, 0.2 + 0.08 * k, 0.1 + 0.08 * k];
+  if (kind === 'bounty') w = [0, 0.1, 0.35, 0.35, 0.2];
   let total = 0;
   for (const v of w) total += v;
   let r = rng() * total;
@@ -355,19 +202,3 @@ export function rollRarity(rng, time, bonus = 0) {
   }
   return 0;
 }
-
-export function rollItem(rng, time, bonus = 0) {
-  const r = rng();
-  const kind = r < 0.62 ? 'skill' : r < 0.81 ? 'armor' : 'boots';
-  const ids = KIND_IDS[kind];
-  const rarity = rollRarity(rng, time, bonus);
-  // 스킬은 기본이 일반 등급이라 각인은 고급부터
-  return makeItem(kind, ids[Math.floor(rng() * ids.length)], kind === 'skill' ? Math.max(1, rarity) : rarity);
-}
-
-// 오브
-export const ORBS = [
-  { id: 'ares', name: '아레스의 오브', color: '#ff3b3b', desc: '주는 피해 +25%' },
-  { id: 'poseidon', name: '포세이돈의 오브', color: '#2fa8ff', desc: '받는 피해 -25%' },
-  { id: 'zeus', name: '제우스의 오브', color: '#ffe14d', desc: '스킬 쿨타임 -30%, 궁극기 게이지 2배' },
-];

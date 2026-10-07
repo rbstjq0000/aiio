@@ -1,6 +1,6 @@
 // 도트 에셋 로더 + 스프라이트 정의 (Ninja Adventure, CC0 — client/assets/LICENSE-ninja-adventure.txt)
 // 단일 HTML 데모에서는 빌드 도구가 window.__STYX_ASSETS__ 에 data URL을 넣어 둔다.
-import { WEAPON_IDS } from '../shared/items.js';
+import { COSMETIC_MAP } from '../shared/cosmetics.js';
 
 // 묶음 빌드(단일 HTML)에서는 import.meta.url 이 없으므로 상대 경로로 대신함
 let BASE = './assets/';
@@ -10,23 +10,28 @@ try {
   // 단일 HTML: window.__STYX_ASSETS__ 를 씀
 }
 
-// 직업별 캐릭터 · 손에 든 무기
-export const CLASS_LOOK = {
-  greatsword: { char: 'KnightGold', weapon: 'BigSword', proj: null },
-  daggers: { char: 'NinjaDark', weapon: 'Sai', proj: 'Kunai' },
-  longbow: { char: 'Hunter', weapon: 'Bow', proj: 'Arrow' },
-  firestaff: { char: 'NinjaMageOrange', weapon: 'MagicWand', proj: 'Fireball' },
-  froststaff: { char: 'NinjaEskimo', weapon: 'Stick', proj: 'IceSpike' },
-  spear: { char: 'SamuraiRed', weapon: 'Lance', proj: 'BigKunai' },
+// 무기별 손에 든 그림 [파일, 그릴 배율]
+export const WEAPON_LOOK = {
+  dagger: { held: 'weapons/Ninjaku.png', scale: 1, icon: 'weapons/Ninjaku.png' },
+  shuriken: { held: 'proj/Shuriken.png', scale: 0.6, icon: 'proj/Shuriken.png' },
+  scroll: { held: 'weapons/ScrollFire.png', scale: 0.6, icon: 'weapons/ScrollFire.png' },
 };
 
-// 몬스터 종류(idx) → 시트, 그릴 배율
+// 닌자 스킨 (shared/cosmetics.js 의 skin.sheet)
+export const SKIN_SHEETS = ['NinjaBlue', 'NinjaRed', 'NinjaGreen', 'NinjaGray', 'NinjaYellow', 'NinjaDark', 'NinjaEskimo', 'NinjaMasked', 'NinjaLeaf', 'NinjaWater', 'NinjaFire', 'NinjaThunder'];
+
+// 몬스터 종류(idx) → 시트, 그릴 배율. strip = 보스(가로 띠, 아래만 봄): [프레임 너비, 프레임 수]
 export const MON_LOOK = [
-  { sheet: 'Slime', scale: 1 }, // 망령
-  { sheet: 'Skull', scale: 1 }, // 해골 궁수
-  { sheet: 'Cyclope', scale: 2 }, // 거한
-  { sheet: 'Beast', scale: 2 }, // 기사
-  { sheet: 'Beast', scale: 3 }, // 수호자
+  { sheet: 'mon/Slime.png', scale: 1 }, // 슬라임
+  { sheet: 'mon/Skull.png', scale: 1 }, // 해골 궁수
+  { sheet: 'mon/Cyclope.png', scale: 2 }, // 외눈 거인
+  { sheet: 'mon/Beast.png', scale: 2 }, // 야수
+  { sheet: 'mon/Beast.png', scale: 3 }, // 수호자
+  { sheet: 'boss/Frog.png', strip: [40, 5], foot: 4 }, // 거대 두꺼비
+  { sheet: 'boss/Spirit.png', strip: [50, 5], foot: 4 }, // 푸른 혼령
+  { sheet: 'boss/Cyclop.png', strip: [50, 6], foot: 3 }, // 외눈 악마
+  { sheet: 'boss/Slime.png', strip: [62, 5], foot: 3 }, // 왕 슬라임
+  { sheet: 'boss/Tengu.png', strip: [82, 6], foot: 6 }, // 대텐구
 ];
 
 // 가로 띠 애니메이션: [파일, 프레임 너비, 프레임 수]
@@ -51,18 +56,20 @@ export const FX = {
   boost: ['fx/boost.png', 53, 8],
 };
 
-// 투사체: [파일, 프레임 너비, 프레임 수, 그림의 기본 방향(라디안)]
+// 투사체: [파일, 프레임 너비, 프레임 수, 그림의 기본 방향(라디안, null = 빙글빙글 돎)]
 export const PROJ = {
   arrow: ['proj/Arrow.png', 16, 1, -Math.PI / 4],
   pierce: ['proj/Arrow.png', 16, 1, -Math.PI / 4],
-  fireball: ['proj/Fireball.png', 16, 4, null],
+  fireball: ['proj/Fireball.png', 16, 4, 0],
   icebolt: ['proj/IceSpike.png', 16, 9, 0],
   lance: ['proj/IceSpike.png', 16, 9, 0],
   dagger: ['proj/Kunai.png', 16, 1, -Math.PI / 4],
   javelin: ['proj/BigKunai.png', 35, 1, 0],
-  bone: ['proj/SpriteSheetRock.png', 16, 4, null],
-  orbshot: ['proj/EnergyBall.png', 16, 4, null],
-  shuriken: ['proj/ShurikenMagic.png', 16, 2, null],
+  bone: ['proj/SpriteSheetRock.png', 16, 4, 0],
+  orbshot: ['proj/EnergyBall.png', 16, 4, 0],
+  shuriken: ['proj/Shuriken.png', 15, 1, null],
+  bigshuriken: ['proj/BigShuriken.png', 23, 2, null],
+  bolt: ['proj/EnergyBall.png', 16, 4, 0],
 };
 
 // 타일셋 안 스프라이트 [파일, x, y, w, h]
@@ -97,7 +104,7 @@ export const SPR = {
   chestB0: ['items/BigTreasureChest.png', 0, 0, 16, 14],
   chestB1: ['items/BigTreasureChest.png', 16, 0, 16, 14],
   coin: ['items/GoldCoin.png', 0, 0, 7, 7],
-  shadow: ['chars/Shadow.png', 0, 0, 12, 7],
+  shadow: ['fx/shadow.png', 0, 0, 12, 7],
 };
 
 // 바닥 텍스처로 쓸 16px 타일 [x, y] (TilesetFloor)
@@ -109,12 +116,12 @@ export const FLOOR = {
 };
 
 const files = new Set();
-for (const k in CLASS_LOOK) {
-  files.add(`chars/${CLASS_LOOK[k].char}.png`);
-  files.add(`weapons/${CLASS_LOOK[k].weapon}.png`);
-  files.add(`faces/${CLASS_LOOK[k].char}.png`);
+for (const k in WEAPON_LOOK) files.add(WEAPON_LOOK[k].held);
+for (const n of SKIN_SHEETS) {
+  files.add(`skins/${n}.png`);
+  files.add(`skins/f_${n}.png`);
 }
-for (const m of MON_LOOK) files.add(`mon/${m.sheet}.png`);
+for (const m of MON_LOOK) files.add(m.sheet);
 for (const k in FX) files.add(FX[k][0]);
 for (const k in PROJ) files.add(PROJ[k][0]);
 for (const k in SPR) files.add(SPR[k][0]);
@@ -170,6 +177,12 @@ export function tintOf(file, color = '#ffffff') {
 
 export const whiteOf = (file) => tintOf(file, '#ffffff');
 
-export function lookOf(weaponIdx) {
-  return CLASS_LOOK[typeof weaponIdx === 'number' ? WEAPON_IDS[weaponIdx] : weaponIdx] || CLASS_LOOK.greatsword;
+// 스킨 → 캐릭터 시트 파일
+export function sheetOf(cos) {
+  const c = cos && COSMETIC_MAP[cos.skin];
+  return `skins/${(c && c.sheet) || 'NinjaBlue'}.png`;
+}
+export function faceOf(cos) {
+  const c = cos && COSMETIC_MAP[cos.skin];
+  return `skins/f_${(c && c.sheet) || 'NinjaBlue'}.png`;
 }

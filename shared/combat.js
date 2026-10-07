@@ -2,19 +2,17 @@
 // 수치/규칙 근거: docs/COMBAT_DESIGN.md
 import { TAU, angleDiff, dist2, segPointDist2 } from './math.js';
 import * as C from './constants.js';
-import { WEAPONS, RARITIES, GRADE_CD, skillAt } from './items.js';
+import { WEAPONS, RARITIES, skillAt } from './items.js';
 import { startDash, resolveStatic, wallBlocked } from './physics.js';
 
 export const KIND_CODE = { basic: 0, skill: 1, ult: 2, dot: 3, monster: 4, slam: 5, zone: 6, aug: 7 };
-export const PROJ_KINDS = ['arrow', 'pierce', 'fireball', 'icebolt', 'lance', 'dagger', 'javelin', 'bone', 'orbshot'];
+export const PROJ_KINDS = ['arrow', 'pierce', 'fireball', 'icebolt', 'lance', 'dagger', 'javelin', 'bone', 'orbshot', 'shuriken', 'bigshuriken', 'bolt'];
 export const AREA_KINDS = ['ground', 'field', 'ring', 'leap', 'line', 'slam', 'burn', 'flag', 'shadow', 'arena'];
 
 const PROJ_KIND_FOR = {
-  longbow: { basic: 'arrow', q: 'pierce', w: 'arrow', e: 'orbshot', r: 'pierce' },
-  firestaff: { basic: 'fireball', q: 'fireball' },
-  froststaff: { basic: 'icebolt', q: 'lance' },
-  daggers: { q: 'dagger', w: 'dagger' },
-  spear: { r: 'javelin' },
+  dagger: { q: 'dagger' },
+  shuriken: { basic: 'shuriken', q: 'bigshuriken', w: 'shuriken', e: 'shuriken', r: 'bigshuriken' },
+  scroll: { basic: 'fireball', q: 'fireball', w: 'icebolt' },
 };
 const BURN_KEYS = ['fireball', 'burn'];
 
@@ -27,19 +25,23 @@ export const CombatMixin = {
     this.events.push(ev);
   },
 
-  // 스킬 등급(증강 '각성'으로 오름)·레벨·증강에 따른 피해 배율
-  gradeOf(p, key) {
-    if (key === 'r') return 0;
-    return p.grade[key] || 0;
+  // 무기 등급 (모든 스킬이 같은 등급)
+  gradeOf(p) {
+    return p.gear.weapon.rarity;
   },
 
-  powerMult(p, kind, key = 'basic') {
-    let m = C.levelMult(p.level) * RARITIES[this.gradeOf(p, key)].mult;
-    const s = p.stats || {};
-    if (kind === 'basic' && s.basicDmg) m *= 1 + s.basicDmg;
-    if (kind === 'ult' && s.ultDmg) m *= 1 + s.ultDmg;
-    if (p.hunter) m *= 1 + 0.04 * p.hunter;
+  // 무기 등급·증강에 따른 피해 배율
+  powerMult(p) {
+    let m = RARITIES[p.gear.weapon.rarity].mult;
+    if (p.hunter && p.aug.hunter) m *= 1 + p.aug.hunter * p.hunter;
     return m;
+  },
+
+  // 기본 공격 속도: 증강 + 피 2세트(체력이 낮을수록 빠름)
+  atkSpeed(p) {
+    let a = 1 + ((p.stats && p.stats.atkSpeed) || 0);
+    if (this.fam(p, 'blood', 2)) a += 0.4 * (1 - p.hp / p.maxHp);
+    return a;
   },
 
   weapon(p) {
@@ -74,7 +76,7 @@ export const CombatMixin = {
   tryBasic(p) {
     if (!this.canAct(p)) return false;
     const w = this.weapon(p);
-    const sk = w.basic;
+    const sk = skillAt(w, 'basic', this.gradeOf(p));
     const tgt = this.basicTarget(p);
     if (tgt) p.aimBasic = Math.atan2(tgt.y - p.y, tgt.x - p.x);
     const dir = tgt ? p.aimBasic : p.aim;
@@ -84,14 +86,14 @@ export const CombatMixin = {
       const c = sk.combo[step];
       p.combo = step + 1;
       p.comboT = 0;
-      const as = 1 + ((p.stats && p.stats.atkSpeed) || 0);
+      const as = this.atkSpeed(p);
       p.act = { key: 'basic', sk, c, step, t: 0, hitAt: c.windup / as, dur: c.dur / as, done: false, dir, moveMult: sk.moveMult, tgt: tgt ? tgt.id : 0 };
       // 붙어 있는 대상에게는 앞으로 내딛지 않음 (몸이 겹쳐 뒤엉켜 보이지 않게)
       const close = tgt && dist2(tgt.x, tgt.y, p.x, p.y) < (c.range * 0.75 + tgt.r) ** 2;
       if (c.lunge && !close) this.lunge(p, dir, c.lunge);
       this.emit({ e: 'swing', id: p.id, s: step, a: r2(dir), x: Math.round(p.x), y: Math.round(p.y) });
     } else {
-      const as = 1 + ((p.stats && p.stats.atkSpeed) || 0);
+      const as = this.atkSpeed(p);
       p.act = { key: 'basic', sk, t: 0, hitAt: sk.windup / as, dur: sk.dur / as, done: false, dir, moveMult: sk.moveMult, tgt: tgt ? tgt.id : 0 };
     }
     p.lastAtkT = this.time;
@@ -101,8 +103,8 @@ export const CombatMixin = {
   trySkill(p, key) {
     if (!this.canAct(p)) return false;
     const w = this.weapon(p);
-    const sk = skillAt(w, key, this.gradeOf(p, key));
-    // 제드 W·R 다시 누르기: 그림자와 자리 바꾸기 (쿨타임과 별개)
+    const sk = skillAt(w, key, this.gradeOf(p));
+    // 단도 W·R 다시 누르기: 그림자와 자리 바꾸기 (쿨타임과 별개)
     if ((sk.type === 'shadow' || sk.type === 'mark') && p.st.rootT <= 0) {
       const sh = this.ownShadows(p).find((a) => a.slot === key && !a.swapped);
       if (sh) return this.swapShadow(p, sh);
@@ -118,13 +120,16 @@ export const CombatMixin = {
       p.ultBack = 0;
     }
     else {
-      p.cd[key] = sk.cd * p.cdMult * GRADE_CD[this.gradeOf(p, key)] * (key === 'q' && p.stats.qcdr ? 1 - p.stats.qcdr : 1);
-      // 이중 시전: Q가 잠시 뒤 한 번 더
-      if (key === 'q' && p.aug.doublecast && !p.recasting) p.recast = { key, t: 0.35 };
+      p.cd[key] = sk.cd * p.cdMult;
       p.cdMax[key] = p.cd[key];
       if (p.cdRefund) p.cd[key] *= 1 - p.cdRefund;
     }
     p.cdRefund = 0;
+    // 질풍: 스킬을 쓰면 잠깐 빨라짐
+    if (p.aug.gust) {
+      p.st.hasteT = Math.max(p.st.hasteT, 1);
+      p.st.haste = Math.max(p.st.haste, p.aug.gust);
+    }
     this.emit({ e: 'skill', id: p.id, k: key, w: p.gear.weapon.type, x: Math.round(p.x), y: Math.round(p.y), a: r2(p.aim) });
     return true;
   },
@@ -148,17 +153,6 @@ export const CombatMixin = {
     resolveStatic(p, this.obstacles, this.R);
     this.emit({ e: 'blink', id: p.id, x: Math.round(fx), y: Math.round(fy), x2: Math.round(p.x), y2: Math.round(p.y) });
     return true;
-  },
-
-  // 다리우스 패시브 출혈
-  addBleed(u, src) {
-    if (!u.alive) return;
-    const bd = WEAPONS.greatsword.passive.bleed;
-    const b = u.st.bleed;
-    if (b && b.src === src.id) {
-      b.n = Math.min(bd.max, b.n + 1);
-      b.t = bd.t;
-    } else u.st.bleed = { n: 1, t: bd.t, tick: 0.5, src: src.id, per: bd.per * this.powerMult(src, 'skill', 'q') };
   },
 
   // 마우스 위치를 사거리 안으로 제한
@@ -239,7 +233,8 @@ export const CombatMixin = {
         startDash(p, -Math.cos(p.aim), -Math.sin(p.aim), sk.time, sk.dist);
         p.act = { ...base, hitAt: 99, dur: sk.time + 0.05, moveMult: 0 };
         const pr = sk.proj;
-        this.spawnProj(p, { angle: p.aim, speed: pr.speed, range: pr.range, dmg: pr.dmg * this.powerMult(p, kind, key), r: pr.r, slow: pr.slow, pkind: 'arrow', ckind: kind });
+        const bpk = (PROJ_KIND_FOR[p.gear.weapon.type] && PROJ_KIND_FOR[p.gear.weapon.type][key]) || 'arrow';
+        this.spawnProj(p, { angle: p.aim, speed: pr.speed, range: pr.range, dmg: pr.dmg * this.powerMult(p, kind, key), r: pr.r, slow: pr.slow, pkind: bpk, ckind: kind });
         return true;
       }
       case 'ground':
@@ -538,8 +533,11 @@ export const CombatMixin = {
         const pk = (PROJ_KIND_FOR[wtype] && PROJ_KIND_FOR[wtype][a.key]) || 'arrow';
         const n = sk.fan || 1;
         const group = n > 1 ? new Set() : null;
+        const groupBack = n > 1 && sk.ret ? new Set() : null;
         for (let i = 0; i < n; i++) this.spawnProj(p, {
           group,
+          groupBack,
+          ret: !!sk.ret,
           angle: n > 1 ? p.aim + (i / (n - 1) - 0.5) * sk.spread : a.key === 'basic' ? a.dir : p.aim,
           homing: a.key === 'basic' ? a.tgt : 0,
           homeTurn: 25,
@@ -577,7 +575,7 @@ export const CombatMixin = {
         const group = new Set();
         for (let i = 0; i < sk.count; i++) {
           const ang = p.aim + (i / (sk.count - 1) - 0.5) * sk.spread;
-          this.spawnProj(p, { angle: ang, speed: sk.speed, range: sk.range, dmg: sk.dmg * this.powerMult(p, kind, key), r: sk.r, knock: sk.knock || 0, slow: sk.slow || null, pkind: 'arrow', ckind: kind, group });
+          this.spawnProj(p, { angle: ang, speed: sk.speed, range: sk.range, dmg: sk.dmg * this.powerMult(p, kind, key), r: sk.r, knock: sk.knock || 0, slow: sk.slow || null, pkind: (PROJ_KIND_FOR[wtype] && PROJ_KIND_FOR[wtype][key]) || 'arrow', ckind: kind, group });
         }
         break;
       }
@@ -638,7 +636,6 @@ export const CombatMixin = {
           const dealt = this.dealDamage(p, u, dmg, { kind, pre: true });
           if (dealt < 0) continue;
           if (sk.slow) this.addSlow(u, sk.slow.amt, sk.slow.t, `pull${p.id}`);
-          if (wtype === 'greatsword') this.addBleed(u, p);
           // 끌어당김: 보스·CC 면역은 끌려오지 않음
           if (u.ccImmune || u.st.ccImmT > 0 || u.st.bulwarkT > 0) continue;
           const pullDist = d - (p.r + u.r + 24);
@@ -748,12 +745,11 @@ export const CombatMixin = {
     }
   },
 
-  // 직업 패시브 (기본 공격 적중 시): 대검 출혈, 쌍단검 약자 멸시
+  // 무기 패시브 (기본 공격 적중 시): 단도 약자 멸시
   basicPassive(p, u) {
     const wt = p.gear.weapon.type;
-    if (wt === 'greatsword') this.addBleed(u, p);
-    else if (wt === 'daggers' && u.alive) {
-      const pv = WEAPONS.daggers.passive;
+    if (wt === 'dagger' && u.alive) {
+      const pv = WEAPONS.dagger.passive;
       if (u.hp < u.maxHp * pv.lowHp && (u.zedT || 0) <= this.time) {
         u.zedT = this.time + pv.cd;
         this.emit({ e: 'passive', id: u.id, x: Math.round(u.x), y: Math.round(u.y) });
@@ -779,7 +775,7 @@ export const CombatMixin = {
   // ---------------- D 구르기 ----------------
   // 커서 방향으로 짧게 구르며 잠깐 무적. 하던 공격·채널을 끊고 즉시 사용
   tryRoll(p) {
-    if (!p.alive || p.cd.d > 0 || p.st.stunT > 0 || p.st.rootT > 0) return false;
+    if (!p.alive || p.rolls <= 0 || p.st.stunT > 0 || p.st.rootT > 0) return false;
     let dx = (Number.isFinite(p.input.cx) ? p.input.cx : p.x + Math.cos(p.aim)) - p.x;
     let dy = (Number.isFinite(p.input.cy) ? p.input.cy : p.y + Math.sin(p.aim)) - p.y;
     const len = Math.sqrt(dx * dx + dy * dy) || 1;
@@ -790,63 +786,88 @@ export const CombatMixin = {
     p.kbx = 0;
     p.kby = 0;
     startDash(p, dx, dy, C.ROLL.time, C.ROLL.dist);
-    p.st.iframeT = Math.max(p.st.iframeT, C.ROLL.iframe);
-    p.cd.d = C.ROLL.cd * (1 - ((p.stats && p.stats.rollCdr) || 0));
-    p.cdMax.d = p.cd.d;
-    p.lastAtkT = this.time;
+    p.st.iframeT = Math.max(p.st.iframeT, C.ROLL.iframe + (p.aug.phantom || 0));
+    p.rolls--;
+    p.cdMax.d = C.ROLL.cd * (1 - ((p.stats && p.stats.rollCdr) || 0));
+    if (p.cd.d <= 0) p.cd.d = p.cdMax.d;
+    p.lastAtkT = Math.max(p.lastAtkT, this.time - C.CALM_TIME + 0.5);
     // 불꽃 발자국: 굴러간 길에 불길
     if (p.aug.firetrail) {
       for (let i = 0; i < 3; i++) {
         const k = i / 2;
-        this.addArea({ kind: 'burn', x: p.x + dx * C.ROLL.dist * k, y: p.y + dy * C.ROLL.dist * k, r: 60, delay: 0, ticks: Infinity, every: 0.5, dur: 2, owner: p.id, team: p.team, dmg: 35, ckind: 'skill', color: 'firestaff' });
+        this.addArea({ kind: 'burn', x: p.x + dx * C.ROLL.dist * k, y: p.y + dy * C.ROLL.dist * k, r: 60, delay: 0, ticks: Infinity, every: 0.5, dur: 2, owner: p.id, team: p.team, dmg: p.aug.firetrail, ckind: 'skill', color: 'scroll' });
       }
+    }
+    // 그림자 걸음: 잠깐 투명
+    if (p.aug.shadowstep) p.st.invisT = Math.max(p.st.invisT, p.aug.shadowstep);
+    // 바람 3세트: 구르고 나면 빨라짐
+    if (this.fam(p, 'wind', 3)) {
+      p.st.hasteT = Math.max(p.st.hasteT, 1.5);
+      p.st.haste = Math.max(p.st.haste, 0.4);
     }
     this.emit({ e: 'dash', id: p.id, x: Math.round(p.x), y: Math.round(p.y), dx: r2(dx), dy: r2(dy) });
     return true;
   },
 
   // ---------------- 증강 효과 ----------------
-  // 매 틱: 이중 시전 예약, 운석 낙하
+  // 매 틱: 운석 낙하, 번개 3세트, 강철 3세트 보호막
   updateAugTimers(p, dt) {
-    if (p.recast) {
-      p.recast.t -= dt;
-      if (p.recast.t <= 0 && this.canAct(p)) {
-        const key = p.recast.key;
-        p.recast = null;
-        p.recasting = true;
-        const sk = skillAt(this.weapon(p), key, this.gradeOf(p, key));
-        if (this.startSkill(p, key, sk)) this.emit({ e: 'skill', id: p.id, k: key, w: p.gear.weapon.type, x: Math.round(p.x), y: Math.round(p.y), a: r2(p.aim) });
-        p.recasting = false;
-      } else if (p.recast && p.recast.t < -1) p.recast = null;
-    }
     if (p.aug.meteor) {
       p.meteorT -= dt;
       if (p.meteorT <= 0) {
-        p.meteorT = 5;
-        let best = null;
-        let bd = 700 * 700;
-        for (const u of this.players.values()) {
-          if (u === p || !u.alive || !u.landed) continue;
-          const d = dist2(u.x, u.y, p.x, p.y);
-          if (d < bd) {
-            bd = d;
-            best = u;
-          }
+        p.meteorT = 6;
+        const best = this.nearestFoe(p, 700);
+        if (best) this.addArea({ kind: 'ground', x: best.x, y: best.y, r: 110, delay: 0.9, ticks: 1, dur: 1.1, owner: p.id, team: p.team, dmg: p.aug.meteor * this.powerMult(p), ckind: 'skill', color: 'scroll' });
+      }
+    }
+    if (this.fam(p, 'storm', 3)) {
+      p.stormT -= dt;
+      if (p.stormT <= 0) {
+        p.stormT = 3;
+        const t = this.nearestFoe(p, 450, true);
+        if (t) {
+          this.emit({ e: 'chain', x: Math.round(p.x), y: Math.round(p.y), x2: Math.round(t.x), y2: Math.round(t.y) });
+          this.dealDamage(p, t, 120 * this.powerMult(p), { kind: 'aug', pre: true });
         }
-        if (best) this.addArea({ kind: 'ground', x: best.x, y: best.y, r: 110, delay: 0.9, ticks: 1, dur: 1.1, owner: p.id, team: p.team, dmg: 180 * this.powerMult(p, 'skill', 'q'), ckind: 'skill', color: 'firestaff' });
+      }
+    }
+    if (this.fam(p, 'steel', 3)) {
+      p.steelT -= dt;
+      if (p.steelT <= 0) {
+        p.steelT = 10;
+        this.giveShield(p, p.maxHp * 0.15, 4);
+        this.emit({ e: 'steelshield', id: p.id, x: Math.round(p.x), y: Math.round(p.y) });
       }
     }
     if (p.secondT > 0) p.secondT -= dt;
   },
 
-  // 기본 공격 적중 시: 연쇄 번개 (3번째마다)
+  // 가까운 적 (플레이어만 또는 몬스터 포함)
+  nearestFoe(p, range, monsters = false) {
+    let best = null;
+    let bd = range * range;
+    for (const u of this.units) {
+      if (u === p || !u.alive || u.team === p.team || (!monsters && !u.isPlayer)) continue;
+      if (u.isPlayer && (u.st.invisT > 0 || u.invulnT > 0)) continue;
+      const d = dist2(u.x, u.y, p.x, p.y);
+      if (d < bd) {
+        bd = d;
+        best = u;
+      }
+    }
+    return best;
+  },
+
+  // 기본 공격 적중 시: 연쇄 번개(3번째마다), 불씨 손길
   onBasicHitAug(p, u) {
     p.basicN = (p.basicN || 0) + 1;
+    if (p.aug.ignite && u.alive) this.addDot(u, p.aug.ignite * this.powerMult(p), 2, p, 'burn');
     if (p.aug.chain && p.basicN % 3 === 0) {
       let n = 0;
       let from = u;
       const hit = new Set([u.id]);
-      while (n < 3) {
+      const max = this.fam(p, 'storm', 2) ? 4 : 3;
+      while (n < max) {
         let next = null;
         let bd = 320 * 320;
         for (const o of this.units) {
@@ -860,32 +881,54 @@ export const CombatMixin = {
         if (!next) break;
         hit.add(next.id);
         this.emit({ e: 'chain', x: Math.round(from.x), y: Math.round(from.y), x2: Math.round(next.x), y2: Math.round(next.y) });
-        this.dealDamage(p, next, 90 * this.powerMult(p, 'skill', 'q'), { kind: 'skill', pre: true });
+        this.dealDamage(p, next, p.aug.chain * this.powerMult(p), { kind: 'aug', pre: true });
         from = next;
         n++;
       }
     }
   },
 
-  // 스킬 적중 시: 마법 수리검
+  // 스킬 적중 시: 마법 수리검, 뇌격
   onSkillHitAug(p, u) {
+    if (!u.alive) return;
+    if (p.aug.thunder) {
+      const k = `thu${u.id}`;
+      if ((p[k] || 0) <= this.time) {
+        p[k] = this.time + 1;
+        this.emit({ e: 'chain', x: Math.round(u.x), y: Math.round(u.y - 200), x2: Math.round(u.x), y2: Math.round(u.y) });
+        this.dealDamage(p, u, p.aug.thunder * this.powerMult(p), { kind: 'aug', pre: true });
+      }
+    }
     if (!p.aug.shurikens || !u.alive) return;
     const k = `shu${u.id}`;
     if ((p[k] || 0) > this.time) return;
     p[k] = this.time + 0.6;
     for (let i = 0; i < 2; i++) {
       const ang = Math.atan2(u.y - p.y, u.x - p.x) + (i ? 0.6 : -0.6);
-      this.spawnProj(p, { angle: ang, speed: 900, range: 900, dmg: 45 * this.powerMult(p, 'skill', 'q'), r: 9, pkind: 'dagger', ckind: 'aug', homing: u.id, homeTurn: 14 });
+      this.spawnProj(p, { angle: ang, speed: 900, range: 900, dmg: p.aug.shurikens * this.powerMult(p), r: 9, pkind: 'shuriken', ckind: 'aug', homing: u.id, homeTurn: 14 });
     }
   },
 
-  // 플레이어를 처치했을 때
-  onKillAug(p, victim) {
-    if (p.aug.hunter && p.hunter < 10) p.hunter++;
-    if (p.aug.reset) {
-      p.cd.q = p.cd.w = p.cd.e = 0;
-      p.ult = Math.min(100, p.ult + 50);
-      this.emit({ e: 'reset', id: p.id, x: Math.round(p.x), y: Math.round(p.y) });
+  // 플레이어를 처치했을 때: 사냥꾼, 그림자 3세트
+  onKillAug(p) {
+    if (p.aug.hunter && p.hunter < 8) p.hunter++;
+    if (this.fam(p, 'shadow', 3)) {
+      p.st.invisT = Math.max(p.st.invisT, 2);
+      p.st.hasteT = Math.max(p.st.hasteT, 2);
+      p.st.haste = Math.max(p.st.haste, 0.3);
+    }
+  },
+
+  // 화염 3세트: 불타는 적이 죽으면 폭발
+  burnBlast(u) {
+    if (!(u.st.burnT > 0) || !u.st.burnSrc) return;
+    const src = this.byId.get(u.st.burnSrc);
+    if (!src || !src.isPlayer || !src.alive || !this.fam(src, 'fire', 3)) return;
+    this.emit({ e: 'areafx', k: 'ground', x: Math.round(u.x), y: Math.round(u.y), r: 160, w: 'scroll' });
+    for (const o of this.units) {
+      if (o === u || !o.alive || o.team === src.team) continue;
+      if (dist2(o.x, o.y, u.x, u.y) > (160 + o.r) ** 2) continue;
+      this.dealDamage(src, o, 150 * this.powerMult(src), { kind: 'aug', pre: true });
     }
   },
 
@@ -910,11 +953,24 @@ export const CombatMixin = {
         dmg *= C.CRIT_MULT;
         crit = true;
       }
-      if (src.aug.executioner && tgt.hp < tgt.maxHp * 0.35) dmg *= 1.3;
+      // 그림자 2세트: 등 뒤에서 때리면 치명타
+      if (!crit && (kind === 'basic' || kind === 'skill' || kind === 'ult') && this.fam(src, 'shadow', 2) && Math.abs(angleDiff(tgt.aim || 0, Math.atan2(src.y - tgt.y, src.x - tgt.x))) > 2.2) {
+        dmg *= C.CRIT_MULT;
+        crit = true;
+      }
+      if (src.aug.executioner && tgt.hp < tgt.maxHp * 0.35) dmg *= 1 + src.aug.executioner;
+      // 무기 상성: 이기는 무기에게 피해 증가
+      if (tgt.isPlayer && WEAPONS[src.gear.weapon.type].beats === tgt.gear.weapon.type) dmg *= 1 + C.COUNTER_BONUS;
     }
-    if (tgt.isPlayer && !ctx.true) {
-      if (tgt.st.bulwarkT > 0 && kind !== 'zone') dmg *= 0.5;
+    if (tgt.isPlayer && !ctx.true && kind !== 'zone') {
       if (tgt.dr) dmg *= 1 - tgt.dr;
+      // 다수에게 동시에 맞는 중: 받는 피해 감소
+      if (src && src.isPlayer && src !== tgt) {
+        tgt.hitters.set(src.id, this.time);
+        let n = 0;
+        for (const t of tgt.hitters.values()) if (this.time - t < 2) n++;
+        if (n >= C.GANG_N) dmg *= 1 - C.GANG_DR;
+      }
     }
     if (tgt.st.shield > 0 && kind !== 'zone' && !ctx.true) {
       const absorbed = Math.min(tgt.st.shield, dmg);
@@ -923,39 +979,37 @@ export const CombatMixin = {
       if (absorbed > 0) this.emit({ e: 'shieldhit', id: tgt.id, x: Math.round(tgt.x), y: Math.round(tgt.y), a: Math.round(absorbed) });
     }
     if (dmg <= 0) return 0;
-    // 불사: 죽을 피해를 한 번 버팀
-    if (tgt.isPlayer && tgt.hp - dmg <= 0 && tgt.aug && tgt.aug.undying && !tgt.undyingUsed) {
-      tgt.undyingUsed = true;
-      tgt.hp = tgt.maxHp * 0.3;
-      tgt.invulnT = Math.max(tgt.invulnT, 2);
-      this.emit({ e: 'undying', id: tgt.id, x: Math.round(tgt.x), y: Math.round(tgt.y) });
-      return 0;
-    }
     tgt.hp -= dmg;
+    // 상자를 여는 중에 다른 플레이어에게 맞으면 끊김 (에픽 보물 뺏기)
+    if (tgt.isPlayer && tgt.channel && src && src.isPlayer && src !== tgt) {
+      tgt.channel = null;
+      this.emit({ e: 'interrupt', id: tgt.id, x: Math.round(tgt.x), y: Math.round(tgt.y) });
+    }
     tgt.lastDmgT = this.time;
     // 두 번째 바람: 체력 30% 아래로 떨어지면 보호막
     if (tgt.isPlayer && tgt.aug && tgt.aug.secondwind && tgt.secondT <= 0 && tgt.hp > 0 && tgt.hp < tgt.maxHp * 0.3) {
       tgt.secondT = 40;
-      this.giveShield(tgt, tgt.maxHp * 0.3, 4);
+      this.giveShield(tgt, tgt.maxHp * tgt.aug.secondwind, 4);
       this.emit({ e: 'secondwind', id: tgt.id, x: Math.round(tgt.x), y: Math.round(tgt.y) });
     }
     // 가시 갑옷: 기본 공격 피해 일부를 되돌려줌
     if (tgt.isPlayer && tgt.aug && tgt.aug.thorns && src && src !== tgt && kind === 'basic' && !ctx.reflect) {
-      this.dealDamage(tgt, src, dmg * 0.35, { kind: 'aug', pre: true, reflect: true });
+      this.dealDamage(tgt, src, dmg * tgt.aug.thorns, { kind: 'aug', pre: true, reflect: true });
     }
     if (tgt.st.mark && src && tgt.st.mark.src === src.id) tgt.st.mark.acc += dmg;
     if (src && src.isPlayer && src !== tgt) {
       src.dmgDealt += tgt.isPlayer ? dmg : 0;
-      src.ult = Math.min(100, src.ult + dmg * C.ULT_PER_DMG * (tgt.isPlayer ? 1 : 0.3) * (1 + ((src.stats && src.stats.ultGain) || 0)));
+      src.ult = Math.min(100, src.ult + dmg * C.ULT_PER_DMG * (tgt.isPlayer ? 1 : 0.3));
       // 흡혈 (넘치는 회복은 흡혈귀 증강이면 보호막)
       const ls = src.stats && src.stats.lifesteal;
       if (ls && kind !== 'dot' && kind !== 'zone') {
         const amt = dmg * ls;
         const room = src.maxHp - src.hp;
-        if (amt > room && src.aug.overheal) this.giveShield(src, Math.min(300, src.st.shield + amt - room), 4);
+        if (amt > room && src.aug.vampire) this.giveShield(src, Math.min(300, src.st.shield + amt - room), 4);
         src.hp = Math.min(src.maxHp, src.hp + amt);
       }
       if (kind === 'skill' || kind === 'ult') this.onSkillHitAug(src, tgt);
+      if (!tgt.isPlayer) tgt.lastDmgT = this.time;
       if (!tgt.isPlayer && !tgt.resetting) this.aggroMonster(tgt, src);
       if (tgt.isPlayer) {
         tgt.lastHitBy = src.id;
@@ -1006,7 +1060,7 @@ export const CombatMixin = {
 
   stun(u, t, freeze = false) {
     if (t <= 0 || this.ccBlocked(u)) return false;
-    t = Math.min(t, C.CC_MAX);
+    t = Math.min(t, C.CC_MAX) * this.tenacity(u);
     u.st.stunT = Math.max(u.st.stunT, t);
     u.st.ccImmT = t + C.CC_IMMUNE;
     if (u.act) u.act = null;
@@ -1015,9 +1069,14 @@ export const CombatMixin = {
     return true;
   },
 
+  // 단도 패시브: 그림자 탈출 (기절·속박 시간 감소)
+  tenacity(u) {
+    return u.isPlayer && u.gear.weapon.type === 'dagger' ? 1 - WEAPONS.dagger.passive.tenacity : 1;
+  },
+
   root(u, t) {
     if (t <= 0 || this.ccBlocked(u)) return false;
-    t = Math.min(t, C.CC_MAX);
+    t = Math.min(t, C.CC_MAX) * this.tenacity(u);
     u.st.rootT = Math.max(u.st.rootT, t);
     u.st.ccImmT = t + C.CC_IMMUNE;
     this.emit({ e: 'root', id: u.id, x: Math.round(u.x), y: Math.round(u.y), t: r2(t) });
@@ -1049,8 +1108,15 @@ export const CombatMixin = {
     const d = u.st.dots;
     const k = `${key}:${src ? src.id : 0}`;
     const i = d.findIndex((q) => q.key === k);
+    const burn = BURN_KEYS.includes(key);
+    // 화염 2세트(+50%)·화상 강화 증강
+    if (burn && src && src.isPlayer) total *= 1 + (this.fam(src, 'fire', 2) ? 0.5 : 0) + (src.aug.scorch || 0);
     const dot = { key: k, per: total / ticks, left: ticks, tick: 0.5, src: src ? src.id : 0 };
-    if (BURN_KEYS.includes(key)) u.st.burnT = Math.max(u.st.burnT, t);
+    if (burn) {
+      u.st.burnT = Math.max(u.st.burnT, t);
+      if (src) u.st.burnSrc = src.id;
+      if (src && src.isPlayer && this.fam(src, 'fire', 2)) this.addSlow(u, 0.1, t, `fire${src.id}`);
+    }
     if (i >= 0) d[i] = dot;
     else d.push(dot);
   },
@@ -1199,6 +1265,9 @@ export const CombatMixin = {
       homing: o.homing || 0,
       homeTurn: o.homeTurn || 6,
       group: o.group || null,
+      groupBack: o.groupBack || null,
+      ret: !!o.ret,
+      back: false,
       bounce: o.bounce || null,
       ignoreId: o.ignoreId || 0, // 튕겨 나온 직후엔 방금 맞힌 대상을 무시
       big: !!o.big,
@@ -1236,7 +1305,8 @@ export const CombatMixin = {
           break;
         }
       }
-      if (!dead && wallBlocked(ox, oy, pr.x, pr.y, this.walls, pr.r * 0.5)) dead = true;
+      if (!dead && !pr.back && wallBlocked(ox, oy, pr.x, pr.y, this.walls, pr.r * 0.5)) dead = true;
+      if (pr.back) dead = false; // 돌아오는 수리검은 벽을 무시
       if (dead) {
         this.emit({ e: 'phit', x: Math.round(pr.x), y: Math.round(pr.y), k: pr.pkind });
         pr.alive = false;
@@ -1276,7 +1346,22 @@ export const CombatMixin = {
           break;
         }
       }
-      if (pr.alive && (pr.dist >= pr.range || pr.x * pr.x + pr.y * pr.y > this.R * this.R)) pr.alive = false;
+      if (pr.alive && pr.ret && !pr.back && pr.dist >= pr.range) {
+        // 풍마수리검: 끝까지 가면 주인에게 돌아옴 (다시 맞힐 수 있음)
+        pr.back = true;
+        pr.hit = null;
+        pr.group = pr.groupBack;
+        pr.dist = 0;
+        pr.range = 2600;
+        pr.homing = pr.owner;
+        pr.homeTurn = 999; // 곧장 주인에게 (같은 길로 돌아오며 다시 맞힘)
+        pr.pierce = 99;
+      }
+      if (pr.alive && pr.back) {
+        const o = this.byId.get(pr.owner);
+        if (!o || !o.alive || dist2(o.x, o.y, pr.x, pr.y) < (o.r + 24) ** 2) pr.alive = false;
+      }
+      if (pr.alive && (pr.dist >= pr.range || pr.x * pr.x + pr.y * pr.y > (this.R + 200) ** 2)) pr.alive = false;
     }
     if (this.projs.some((p) => !p.alive)) this.projs = this.projs.filter((p) => p.alive);
   },
@@ -1492,9 +1577,8 @@ export const CombatMixin = {
       const dealt = this.dealDamage(owner, u, dmg, { kind: a.kind === 'burn' ? 'dot' : a.ckind, pre: true, big: a.kind === 'line' || (a.outer && dmg > a.dmg) });
       if (dealt < 0) continue;
       if (a.kind === 'burn') u.st.burnT = Math.max(u.st.burnT, 0.7);
-      if (a.dot) this.addDot(u, a.dot.dmg, a.dot.t, owner, a.color === 'firestaff' ? 'burn' : 'bleed');
+      if (a.dot) this.addDot(u, a.dot.dmg, a.dot.t, owner, a.color === 'scroll' ? 'burn' : 'bleed');
       if (a.heal && owner && owner.alive) this.heal(owner, a.heal * (u.isPlayer ? 1 : 0.35));
-      if (a.kind === 'ring' && a.color === 'greatsword' && owner && owner.isPlayer) this.addBleed(u, owner);
       if (a.stun) this.stun(u, a.stun);
       if (a.root) this.root(u, a.root);
       if (a.slow) this.addSlow(u, a.slow.amt, a.slow.t, `area${a.id}`);

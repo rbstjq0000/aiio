@@ -1,6 +1,8 @@
 // 캔버스 렌더러: 이미지 파일 없이 전부 코드로 그림 (네온 발광 + 파티클)
 import { COSMETIC_MAP } from '../shared/cosmetics.js';
-import { WEAPONS, RARITIES, ORBS } from '../shared/items.js';
+import { WEAPONS, RARITIES } from '../shared/items.js';
+// 예전 오브 모드의 흔적 (도트 렌더러에서는 쓰지 않음)
+const ORBS = [];
 import { PF } from '../shared/sim.js';
 import { VIEW_W, VIEW_H, VISION_R } from '../shared/constants.js';
 

@@ -3,11 +3,14 @@
 import { Renderer, hexA } from './render.js';
 import { PF } from '../shared/sim.js';
 import { VIEW_W, VIEW_H } from '../shared/constants.js';
-import { IMG, SPR, FX, PROJ, FLOOR, MON_LOOK, lookOf, whiteOf, tintOf } from './assets.js';
+import { IMG, SPR, FX, PROJ, FLOOR, MON_LOOK, WEAPON_LOOK, sheetOf, whiteOf, tintOf } from './assets.js';
+import { RARITIES, WEAPONS } from '../shared/items.js';
+import { MONSTER_BY_IDX } from '../shared/monsters.js';
 
 export const PX = 3; // 월드 단위 / 도트 1칸
 const TAU = Math.PI * 2;
-const CHEST_GLOW = ['', '#ffcf4a', '#ff7ef2'];
+const CHEST_GLOW = { small: '', big: '#ffcf4a', bounty: '#ffd54a', epic: '#c56bff', titan: '#ff7ef2' };
+const FAM_ICONS = ['', '🔥', '⚡', '🌑', '🛡', '🩸', '🍃'];
 
 function hash2(x, y, s = 0) {
   let h = (x * 374761393 + y * 668265263 + s * 1442695041) | 0;
@@ -384,7 +387,9 @@ export class PixelRenderer extends Renderer {
     this.units = v.players.concat(v.monsters);
     const list = [];
     for (const s of this.staticsOf(v.map)) if (this.visible(s.x, s.y, 120)) list.push({ y: s.sort, s });
-    for (const c of v.chests) if (this.visible(c.x, c.y, 40)) list.push({ y: c.y, c });
+    for (const c of v.chests) if (this.visible(c.x, c.y, 60)) list.push({ y: c.y, c });
+    for (const g of v.items || []) if (this.visible(g.x, g.y, 40)) list.push({ y: g.y, g });
+    for (const l of v.lairs || []) if ((l.state === 'sleep' || l.state === 'dead') && this.visible(l.x, l.y, 120)) list.push({ y: l.y, l });
     for (const m of v.monsters) if (this.visible(m.x, m.y, 60)) list.push({ y: m.y, m });
     for (const p of v.players) if (this.visible(p.x, p.y, 60)) list.push({ y: p.y, p });
     list.sort((a, b) => a.y - b.y);
@@ -394,6 +399,8 @@ export class PixelRenderer extends Renderer {
       if (it.p) this.drawPlayer(it.p, v);
       else if (it.m) this.drawMonster(it.m, t);
       else if (it.c) this.drawChest(it.c, t);
+      else if (it.g) this.drawItem(it.g, t);
+      else if (it.l) this.drawLair(it.l, t);
       else this.drawStatic(it.s, me);
       L.globalAlpha = 1;
     }
@@ -450,29 +457,120 @@ export class PixelRenderer extends Renderer {
     const lx = Math.round(c.x / PX);
     const ly = Math.round(c.y / PX);
     const big = c.kind !== 'small';
-    const glow = CHEST_GLOW[c.kind === 'bounty' ? 2 : big ? 1 : 0];
-    if (!c.open && glow) {
+    const glow = CHEST_GLOW[c.kind];
+    const s = c.kind === 'titan' ? 2 : 1;
+    if (!c.open && glow && !c.locked) {
       // 은은하게 빛나는 바닥
       L.globalAlpha = 0.35 + 0.15 * Math.sin(t * 4 + c.id);
       L.fillStyle = glow;
-      L.fillRect(lx - 9, ly + 1, 18, 3);
-      L.fillRect(lx - 7, ly, 14, 5);
+      L.fillRect(lx - 9 * s, ly + 1, 18 * s, 3);
+      L.fillRect(lx - 7 * s, ly, 14 * s, 5);
       L.globalAlpha = 1;
     }
     this.spr('shadow', lx - 6, ly - 1);
     const name = big ? (c.open ? 'chestB1' : 'chestB0') : c.open ? 'chestS1' : 'chestS0';
     if (c.open) L.globalAlpha = 0.7;
-    this.spr(name, lx - 8, ly - (big ? 11 : 12));
+    if (c.locked) L.globalAlpha = 0.75;
+    const sp = SPR[name];
+    const img = IMG[sp[0]];
+    if (img && img.width) {
+      L.drawImage(img, sp[1], sp[2], sp[3], sp[4], lx - 8 * s, ly - (big ? 11 : 12) * s, sp[3] * s, sp[4] * s);
+      // 에픽 보물: 보라·분홍빛으로 물들임
+      if ((c.kind === 'epic' || c.kind === 'titan') && !c.open) {
+        const ti = tintOf(sp[0], glow);
+        if (ti) {
+          L.globalAlpha = 0.35 + 0.15 * Math.sin(t * 6);
+          L.drawImage(ti, sp[1], sp[2], sp[3], sp[4], lx - 8 * s, ly - 11 * s, sp[3] * s, sp[4] * s);
+        }
+      }
+    }
     L.globalAlpha = 1;
+    if (c.locked && !c.open) {
+      // 자물쇠: 캠프 몹을 다 잡아야 열림
+      const y = ly - 20;
+      L.fillStyle = '#2a1a10';
+      L.fillRect(lx - 4, y - 1, 9, 8);
+      L.fillStyle = '#c9c9d6';
+      L.fillRect(lx - 3, y + 2, 7, 4);
+      L.fillRect(lx - 2, y - 2, 1, 4);
+      L.fillRect(lx + 2, y - 2, 1, 4);
+      L.fillRect(lx - 2, y - 3, 5, 1);
+      L.fillStyle = '#2a1a10';
+      L.fillRect(lx, y + 3, 1, 2);
+    }
     if (!c.open && c.kind === 'bounty') {
       // 현상금 주머니: 위에서 빙글빙글 도는 금화
       const bob = Math.round(Math.sin(t * 5 + c.id) * 2);
       this.spr('coin', lx - 3, ly - 22 + bob);
     }
-    if (!c.open && glow && Math.random() < 0.08) {
+    if (!c.open && !c.locked && glow && Math.random() < (c.kind === 'titan' || c.kind === 'epic' ? 0.4 : 0.08)) {
       const a = Math.random() * TAU;
-      this.burst(c.x + Math.cos(a) * 20, c.y - 10 + Math.sin(a) * 10, glow, 1, 30, 3, 0.6, { grav: -40, drag: 1 });
+      this.burst(c.x + Math.cos(a) * 20 * s, c.y - 10 + Math.sin(a) * 10, glow, 1, 30, 3, 0.6, { grav: -40, drag: 1 });
     }
+  }
+
+  // 바닥에 떨어진 무기: 등급 색으로 빛나며 둥실둥실
+  drawItem(g, t) {
+    const L = this.ctx;
+    const lx = Math.round(g.x / PX);
+    const ly = Math.round(g.y / PX);
+    const look = WEAPON_LOOK[g.type];
+    const img = look && IMG[look.icon];
+    const col = RARITIES[g.rarity].color;
+    L.globalAlpha = 0.45;
+    L.fillStyle = '#000';
+    L.fillRect(lx - 4, ly, 9, 2);
+    L.globalAlpha = 0.3 + 0.2 * Math.sin(t * 4 + g.id);
+    L.fillStyle = col;
+    L.fillRect(lx - 6, ly - 1, 13, 3);
+    if (g.rarity >= 3) {
+      L.fillRect(lx - 1, ly - 30, 3, 28);
+    }
+    L.globalAlpha = 1;
+    if (!img || !img.width) return;
+    const bob = Math.round(Math.sin(t * 3 + g.id) * 1.5);
+    const w = Math.max(6, Math.round(img.width * (g.type === 'dagger' ? 1 : 0.8)));
+    const h = Math.round((img.height * w) / img.width);
+    const x = lx - Math.floor(w / 2);
+    const y = ly - h - 4 + bob;
+    // 등급 색 테두리
+    const ti = tintOf(look.icon, col);
+    if (ti && g.rarity > 0) for (const [ox, oy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) L.drawImage(ti, x + ox, y + oy, w, h);
+    L.drawImage(img, x, y, w, h);
+    if (g.rarity >= 2 && Math.random() < 0.06 * g.rarity) this.burst(g.x + (Math.random() - 0.5) * 30, g.y - 20, col, 1, 20, 3, 0.6, { grav: -50, drag: 1 });
+  }
+
+  // 잠든 (또는 다시 깨어나기를 기다리는) 에픽 몬스터
+  drawLair(l, t) {
+    const L = this.ctx;
+    const look = MON_LOOK[l.bossIdx];
+    const img = look && IMG[look.sheet];
+    const lx = Math.round(l.x / PX);
+    const ly = Math.round(l.y / PX);
+    // 둥지: 어두운 원
+    L.globalAlpha = 0.35;
+    L.fillStyle = '#2a1a30';
+    L.beginPath();
+    L.ellipse(lx, ly, 30, 14, 0, 0, TAU);
+    L.fill();
+    L.globalAlpha = 1;
+    if (l.state === 'dead' || !img || !img.width) return;
+    const [fw] = look.strip;
+    const fh = img.height;
+    L.globalAlpha = 0.6;
+    L.drawImage(img, 0, 0, fw, fh, lx - Math.floor(fw / 2), ly - fh + look.foot, fw, fh);
+    L.globalAlpha = 1;
+    // Zzz
+    const k = (t * 0.8) % 1;
+    L.fillStyle = '#e8f6ff';
+    L.globalAlpha = 1 - k;
+    const zx = lx + 10 + Math.round(k * 8);
+    const zy = ly - fh + 2 - Math.round(k * 12);
+    L.fillRect(zx, zy, 4, 1);
+    L.fillRect(zx + 2, zy + 1, 1, 1);
+    L.fillRect(zx + 1, zy + 2, 1, 1);
+    L.fillRect(zx, zy + 3, 4, 1);
+    L.globalAlpha = 1;
   }
 
   // ---------------- 캐릭터 ----------------
@@ -481,9 +579,9 @@ export class PixelRenderer extends Renderer {
     L.save();
     this.pixMode();
     const t = v.time;
-    const look = lookOf(p.w);
-    const file = `chars/${look.char}.png`;
+    const file = sheetOf(p.cos);
     const img = IMG[file];
+    const rar = p.rar || 0;
     const [rx, ry] = this.recoilOf(p.id);
     const lx = Math.round((p.x + rx) / PX);
     const ly = Math.round((p.y + ry) / PX);
@@ -505,13 +603,34 @@ export class PixelRenderer extends Renderer {
     L.globalAlpha = alpha;
     if (p.me) this.footRing(lx, ly + 3, '#ffe36b');
     else if (f & PF.BOUNTY) this.footRing(lx, ly + 3, '#ffb000');
+    // 무기 등급 오라: 전설·신화는 발밑 원 + 떠오르는 불꽃 (멀리서도 "쟤 세다")
+    if (rar >= 4 && !(f & PF.INVIS)) {
+      const col = RARITIES[rar].color;
+      L.globalAlpha = alpha * (0.35 + 0.2 * Math.sin(t * 5 + p.id));
+      L.strokeStyle = col;
+      L.lineWidth = 1;
+      L.beginPath();
+      L.ellipse(lx + 0.5, ly + 3.5, 11, 5, 0, 0, TAU);
+      L.stroke();
+      L.globalAlpha = alpha;
+      if (Math.random() < (rar >= 5 ? 0.6 : 0.3)) this.burst(p.x + (Math.random() - 0.5) * 34, p.y - 8, Math.random() < 0.5 ? col : '#ffffff', 1, 30, 4, 0.7, { grav: -90, drag: 1 });
+    } else if (rar === 3 && Math.random() < 0.12) this.burst(p.x + (Math.random() - 0.5) * 30, p.y - 20, RARITIES[3].color, 1, 20, 3, 0.6, { grav: -60, drag: 1 });
     this.spr('shadow', lx - 6, ly);
     const big = (p.r || 18) > 20 ? 2 : 1; // 거인화 증강
     const dx = lx - 8 * big;
     const dy = ly - 13 * big;
     const wFront = col !== 1;
-    if (!wFront) this.drawHeld(p, look, lx, ly, t);
+    if (!wFront) this.drawHeld(p, lx, ly, t);
     if (img && img.width) {
+      // 등급 테두리: 등급 색 실루엣을 상하좌우로 1칸씩 밀어 그림 (영웅 이상은 깜빡임)
+      if (rar > 0 && !(f & PF.INVIS)) {
+        const ti = tintOf(file, RARITIES[rar].color);
+        if (ti) {
+          L.globalAlpha = alpha * (rar >= 3 ? 0.75 + 0.25 * Math.sin(t * (rar >= 4 ? 8 : 4) + p.id) : 0.9);
+          for (const [ox, oy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) L.drawImage(ti, col * 16, row * 16, 16, 16, dx + ox, dy + oy, 16 * big, 16 * big);
+          L.globalAlpha = alpha;
+        }
+      }
       L.drawImage(img, col * 16, row * 16, 16, 16, dx, dy, 16 * big, 16 * big);
       const fl = this.flash.get(p.id);
       if (fl) {
@@ -523,7 +642,7 @@ export class PixelRenderer extends Renderer {
         }
       }
     }
-    if (wFront) this.drawHeld(p, look, lx, ly, t);
+    if (wFront) this.drawHeld(p, lx, ly, t);
     L.globalAlpha = alpha;
     this.drawStatusPx(p, lx, ly - 13 * big, t);
     L.restore();
@@ -539,9 +658,11 @@ export class PixelRenderer extends Renderer {
   }
 
   // 손에 든 무기: 공격 중에는 조준 방향으로 휘두름
-  drawHeld(p, look, lx, ly, t) {
-    const img = IMG[`weapons/${look.weapon}.png`];
+  drawHeld(p, lx, ly, t) {
+    const look = WEAPON_LOOK[p.w] || WEAPON_LOOK.dagger;
+    const img = IMG[look.held];
     if (!img || !img.width) return;
+    const sc = look.scale;
     const L = this.ctx;
     let a = p.aim;
     let reach = 6;
@@ -560,7 +681,10 @@ export class PixelRenderer extends Renderer {
     L.save();
     L.translate(lx + Math.round(Math.cos(a) * reach), ly - 5 + Math.round(Math.sin(a) * reach * 0.8));
     L.rotate(a + Math.PI / 2);
-    L.drawImage(img, -Math.floor(img.width / 2), -img.height + 3);
+    if (p.w === 'shuriken') L.rotate(t * (p.act > 0 ? 20 : 3));
+    const w = Math.max(3, Math.round(img.width * sc));
+    const h = Math.max(3, Math.round(img.height * sc));
+    L.drawImage(img, -Math.floor(w / 2), p.w === 'shuriken' ? -Math.floor(h / 2) : -h + 3, w, h);
     if (p.flags & PF.EMPOWER) {
       L.globalCompositeOperation = 'lighter';
       L.globalAlpha = 0.5 + 0.3 * Math.sin(t * 14);
@@ -620,29 +744,48 @@ export class PixelRenderer extends Renderer {
     L.save();
     this.pixMode();
     const look = MON_LOOK[m.type] || MON_LOOK[0];
-    const file = `mon/${look.sheet}.png`;
+    const file = look.sheet;
     const img = IMG[file];
     const [rx, ry] = this.recoilOf(m.id);
     const lx = Math.round((m.x + rx) / PX);
     const ly = Math.round((m.y + ry) / PX);
-    const s = look.scale;
-    const col = dirCol(m.aim);
-    const row = Math.floor(t * 6 + m.id) % 4;
+    // 그릴 칸: 일반 몬스터는 4방향 시트, 보스는 가로 띠
+    let sx;
+    let sy;
+    let fw;
+    let fh;
+    let s;
+    if (look.strip) {
+      [fw] = look.strip;
+      fh = img && img.height ? img.height : 40;
+      sx = (Math.floor(t * 7 + m.id) % look.strip[1]) * fw;
+      sy = 0;
+      s = 1;
+    } else {
+      fw = fh = 16;
+      s = look.scale;
+      sx = dirCol(m.aim) * 16;
+      sy = (Math.floor(t * 6 + m.id) % 4) * 16;
+    }
+    const dw = fw * s;
+    const dh = fh * s;
+    const dx = lx - Math.floor(dw / 2);
+    const dy = look.strip ? ly - dh + look.foot : ly - 14 * s;
+    m.top = dy;
     L.globalAlpha = 0.5;
     L.fillStyle = '#000';
-    L.fillRect(lx - 5 * s, ly + 1, 10 * s, 2);
-    L.fillRect(lx - 4 * s, ly, 8 * s, 4);
+    L.beginPath();
+    L.ellipse(lx, ly + 1, Math.max(5, dw * 0.32), Math.max(2, dw * 0.1), 0, 0, TAU);
+    L.fill();
     L.globalAlpha = 1;
-    const dx = lx - 8 * s;
-    const dy = ly - 14 * s;
-    if (img && img.width) L.drawImage(img, col * 16, row * 16, 16, 16, dx, dy, 16 * s, 16 * s);
+    if (img && img.width) L.drawImage(img, sx, sy, fw, fh, dx, dy, dw, dh);
     const wind = m.wind / 100;
     const fl = this.flash.get(m.id);
     // 피격: 하얗게 / 공격 준비: 붉게 깜빡이고 머리 위에 느낌표
     const ti = fl ? whiteOf(file) : wind > 0 ? tintOf(file, '#ff2a3d') : null;
     if (ti) {
       L.globalAlpha = fl ? Math.min(1, fl / 0.09) : 0.2 + 0.5 * wind * (0.6 + 0.4 * Math.sin(t * 30));
-      L.drawImage(ti, col * 16, row * 16, 16, 16, dx, dy, 16 * s, 16 * s);
+      L.drawImage(ti, sx, sy, fw, fh, dx, dy, dw, dh);
       L.globalAlpha = 1;
       if (!fl) {
         L.fillStyle = '#ff3d4f';
@@ -672,6 +815,9 @@ export class PixelRenderer extends Renderer {
       L.save();
       L.setTransform(1, 0, 0, 1, this.pixT[0] + Math.round(q.x / PX), this.pixT[1] + Math.round(q.y / PX));
       if (def[3] != null) L.rotate(Math.atan2(q.vy, q.vx) - def[3]);
+      else L.rotate(v.time * 18 + q.id);
+      const sc = q.r >= 20 ? 2 : 1;
+      if (sc > 1) L.scale(sc, sc);
       L.drawImage(img, fr * fw, 0, fw, fh, -Math.floor(fw / 2), -Math.floor(fh / 2), fw, fh);
       L.restore();
       if (q.kind === 'fireball' && Math.random() < 0.5) this.burst(q.x, q.y, '#ff7a2e', 1, 30, 4, 0.3, { drag: 2 });
@@ -797,41 +943,91 @@ export class PixelRenderer extends Renderer {
     }
     for (const m of v.monsters) {
       if (!this.visible(m.x, m.y) || (m.hp >= m.maxHp && m.type < 3)) continue;
-      const s = (MON_LOOK[m.type] || MON_LOOK[0]).scale;
+      const look = MON_LOOK[m.type] || MON_LOOK[0];
+      const boss = !!look.strip;
       const lx = Math.round(m.x / PX);
-      const ly = Math.round(m.y / PX) - 14 * s - 4;
-      const w = 12 + s * 6;
+      const ly = (m.top != null ? m.top : Math.round(m.y / PX) - 14 * (look.scale || 1)) - 4;
+      const w = boss ? (m.type === 9 ? 60 : 40) : 12 + (look.scale || 1) * 6;
+      const h = boss ? 3 : 2;
       L.fillStyle = '#16121c';
-      L.fillRect(lx - w / 2 - 1, ly - 1, w + 2, 4);
-      L.fillStyle = m.type >= 3 ? '#c56bff' : '#ff9a4a';
-      L.fillRect(lx - w / 2, ly, Math.round(w * Math.max(0, m.hp / m.maxHp)), 2);
+      L.fillRect(lx - w / 2 - 1, ly - 1, w + 2, h + 2);
+      L.fillStyle = boss ? '#c56bff' : m.type >= 3 ? '#c56bff' : '#ff9a4a';
+      if (m.type === 9) L.fillStyle = '#ff7ef2';
+      L.fillRect(lx - w / 2, ly, Math.round(w * Math.max(0, m.hp / m.maxHp)), h);
+      if (boss) {
+        // 30% 선
+        L.fillStyle = '#ffffff';
+        L.fillRect(lx - w / 2 + Math.round(w * 0.3), ly - 1, 1, h + 2);
+      }
     }
   }
 
-  // 이름표: 화면 해상도로 (한글)
+  // 이름표: 화면 해상도로 (한글). 증강 계열 아이콘, 보스 이름, 가까운 바닥 무기 이름
   drawNames(v) {
     const ctx = this.mainCtx;
     ctx.save();
     ctx.textAlign = 'center';
     ctx.lineJoin = 'round';
+    const me = v.players.find((p) => p.me);
     for (const p of v.players) {
-      if (p.me || !this.visible(p.x, p.y) || (p.flags & PF.INVIS) || p.id <= 0) continue;
+      if (!this.visible(p.x, p.y) || (p.flags & PF.INVIS && !p.me) || p.id <= 0) continue;
       const big = (p.r || 18) > 20 ? 2 : 1;
       const [sx, sy] = this.toScreen(p.x, p.y - (13 * big + 7) * PX);
+      // 증강 계열 아이콘 (나도 표시)
+      let icons = '';
+      let c = p.fam || 0;
+      for (let i = 0; i < 3 && c > 0; i++) {
+        icons += FAM_ICONS[c % 7] || '';
+        c = Math.floor(c / 7);
+      }
+      if (p.me) {
+        if (icons) {
+          ctx.font = '11px sans-serif';
+          ctx.fillText(icons, sx, sy - 2);
+        }
+        continue;
+      }
       const bounty = p.flags & PF.BOUNTY;
-      const label = `${p.level ? `${p.level} ` : ''}${p.name || ''}`;
+      const label = p.name || '';
       ctx.font = '700 12px "Noto Sans KR", sans-serif';
       ctx.lineWidth = 3;
       ctx.strokeStyle = 'rgba(10,8,16,0.85)';
       ctx.strokeText(label, sx, sy);
-      ctx.fillStyle = bounty ? '#ffd54a' : '#ffffff';
+      ctx.fillStyle = bounty ? '#ffd54a' : (p.rar || 0) >= 3 ? RARITIES[p.rar].color : '#ffffff';
       ctx.fillText(label, sx, sy);
-      if (bounty) {
-        const s = `💰 ${p.kills}`;
-        ctx.font = '800 12px "Noto Sans KR", sans-serif';
-        ctx.strokeText(s, sx, sy - 15);
+      const top = `${icons}${bounty ? ` 💰${p.kills}` : ''}`;
+      if (top) {
+        ctx.font = '800 11px "Noto Sans KR", sans-serif';
+        ctx.strokeText(top, sx, sy - 14);
         ctx.fillStyle = '#ffd54a';
-        ctx.fillText(s, sx, sy - 15);
+        ctx.fillText(top, sx, sy - 14);
+      }
+    }
+    // 보스 이름
+    for (const m of v.monsters) {
+      const look = MON_LOOK[m.type];
+      if (!look || !look.strip || !this.visible(m.x, m.y)) continue;
+      const def = MONSTER_BY_IDX[m.type];
+      const [sx, sy] = this.toScreen(m.x, ((m.top != null ? m.top : m.y / PX) - 8) * PX);
+      ctx.font = '800 13px "Noto Sans KR", sans-serif';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(10,8,16,0.85)';
+      ctx.strokeText(def.name, sx, sy);
+      ctx.fillStyle = def.titan ? '#ff7ef2' : '#e0b8ff';
+      ctx.fillText(def.name, sx, sy);
+    }
+    // 가까운 바닥 무기 이름
+    if (me) {
+      for (const g of v.items || []) {
+        if ((g.x - me.x) ** 2 + (g.y - me.y) ** 2 > 260 * 260) continue;
+        const [sx, sy] = this.toScreen(g.x, g.y - 50);
+        ctx.font = '800 11px "Noto Sans KR", sans-serif';
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = 'rgba(10,8,16,0.85)';
+        const label = `${RARITIES[g.rarity].name} ${WEAPONS[g.type].name}`;
+        ctx.strokeText(label, sx, sy);
+        ctx.fillStyle = RARITIES[g.rarity].color;
+        ctx.fillText(label, sx, sy);
       }
     }
     ctx.restore();
@@ -865,7 +1061,9 @@ export class PixelRenderer extends Renderer {
     const ctx = this.mainCtx;
     const { w, h } = this;
     const marks = [];
-    for (const p of v.players) if (!p.me && p.flags & PF.BOUNTY) marks.push({ x: p.x, y: p.y, color: '#ffd54a', label: `💰${p.kills}` });
+    for (const b of v.bounties || []) if (b[0] !== v.meId) marks.push({ x: b[1], y: b[2], color: '#ffd54a', label: `💰${b[3]}` });
+    // 체력 30% 아래로 떨어진 에픽 몬스터 (어부지리 기회)
+    for (const l of v.lairs || []) if (l.state === 'fight' && l.hp > 0 && l.hp <= 30) marks.push({ x: l.x, y: l.y, color: '#d68bff', label: `에픽 ${l.hp}%` });
     const me = v.players.find((p) => p.me);
     const z = v.zone;
     if (me && z && z.active) {
@@ -973,19 +1171,54 @@ export class PixelRenderer extends Renderer {
       g.font = '700 10px "Noto Sans KR", sans-serif';
       g.textAlign = 'center';
       for (const p of v.map.pois || []) {
+        // 에픽 둥지 이름은 작게 아이콘 아래에
+        const dy = p.lair ? 16 : 4;
+        g.font = p.lair ? '700 9px "Noto Sans KR", sans-serif' : '700 10px "Noto Sans KR", sans-serif';
         g.lineWidth = 3;
         g.strokeStyle = 'rgba(0,0,0,0.7)';
-        g.strokeText(p.name, p.x * k, p.y * k + 4);
-        g.fillStyle = '#fff6d8';
-        g.fillText(p.name, p.x * k, p.y * k + 4);
+        g.strokeText(p.name, p.x * k, p.y * k + dy);
+        g.fillStyle = p.lair ? '#e6c8ff' : '#fff6d8';
+        g.fillText(p.name, p.x * k, p.y * k + dy);
       }
     }
-    for (const p of v.players) {
-      if (p.me || !(p.flags & PF.BOUNTY)) continue;
+    // 에픽 둥지: 잠듦(회색) / 살아 있음(보라) / 싸우는 중(깜빡임) / 처치됨(남은 시간)
+    g.textAlign = 'center';
+    for (const l of v.lairs || []) {
+      if (l.state === 'gone') continue;
+      const x = l.x * k;
+      const y = l.y * k;
+      const big = l.kind === 'titan';
+      const fight = l.state === 'fight';
+      const r = big ? 7 : 5;
+      g.beginPath();
+      g.arc(x, y, r + (fight ? 1.5 * Math.sin(v.time * 12) : 0), 0, TAU);
+      g.fillStyle = l.state === 'sleep' || l.state === 'dead' ? 'rgba(90,80,110,0.85)' : fight ? (Math.floor(v.time * 6) % 2 ? '#ff4d6b' : '#ffffff') : big ? '#ff7ef2' : '#c56bff';
+      g.fill();
+      g.lineWidth = 1.5;
+      g.strokeStyle = '#1a1020';
+      g.stroke();
+      g.font = `800 ${big ? 9 : 8}px "Noto Sans KR", sans-serif`;
+      g.fillStyle = '#fff';
+      g.fillText(big ? '★' : '◆', x, y + 3);
+      if ((l.state === 'sleep' || l.state === 'dead') && l.t > 0 && opts.timers !== false) {
+        g.font = '700 9px "Noto Sans KR", sans-serif';
+        g.lineWidth = 2.5;
+        g.strokeStyle = 'rgba(0,0,0,0.8)';
+        const tx = `${Math.floor(l.t / 60)}:${String(l.t % 60).padStart(2, '0')}`;
+        g.strokeText(tx, x, y - r - 2);
+        g.fillStyle = '#e8dcff';
+        g.fillText(tx, x, y - r - 2);
+      }
+    }
+    for (const b of v.bounties || []) {
+      if (b[0] === v.meId) continue;
       g.fillStyle = '#ffd54a';
       g.beginPath();
-      g.arc(p.x * k, p.y * k, 3, 0, TAU);
+      g.arc(b[1] * k, b[2] * k, 3.5, 0, TAU);
       g.fill();
+      g.strokeStyle = '#2a1a10';
+      g.lineWidth = 1;
+      g.stroke();
     }
     const me = v.players.find((p) => p.me);
     const mark = me || v.specTarget;

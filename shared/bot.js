@@ -2,7 +2,8 @@
 // 사냥 → 상자/장비 → 오브 쟁탈 → 교전/후퇴
 import { dist2 } from './math.js';
 import { PRESS } from './constants.js';
-import { WEAPONS } from './items.js';
+import { WEAPONS, canTake } from './items.js';
+import { MONSTERS } from './monsters.js';
 
 export const BOT_NAMES = [
   '그림자여우', 'Noctis', '망자의왕', 'Kairos', '하늘조각', 'Rinne', '불멸의토끼', 'Ashen',
@@ -13,17 +14,14 @@ export const BOT_NAMES = [
 
 // 무기별 교전 거리와 스킬 사용 조건
 const AI = {
-  greatsword: { pref: 70, reach: 105, q: { max: 175 }, w: { max: 220 }, e: { min: 130, max: 310, aim: true }, r: { max: 460, exec: true } },
-  daggers: { pref: 55, reach: 80, q: { min: 60, max: 760, aim: true }, w: { min: 200, max: 650, ground: true }, e: { max: 170 }, r: { max: 520, exec: true } },
-  longbow: { pref: 430, reach: 740, q: { min: 150, max: 900, aim: true }, w: { max: 560, aim: true }, e: { max: 220, escape: true }, r: { max: 1100, aim: true } },
-  firestaff: { pref: 380, reach: 630, q: { max: 740, aim: true }, w: { max: 660, ground: true }, e: { max: 620, exec: true }, r: { max: 700, exec: true } },
-  froststaff: { pref: 360, reach: 630, q: { max: 800, aim: true }, w: { max: 160 }, e: { max: 160, escape: true }, r: { max: 590, ground: true } },
-  spear: { pref: 120, reach: 150, q: { max: 330, aim: true }, w: { max: 280 }, e: { min: 100, max: 500, ground: true }, r: { min: 150, max: 620, ground: true } },
+  dagger: { pref: 55, reach: 82, q: { min: 60, max: 740, aim: true }, w: { min: 200, max: 650, ground: true }, e: { max: 170 }, r: { max: 520, exec: true } },
+  shuriken: { pref: 470, reach: 690, q: { min: 120, max: 880, aim: true }, w: { max: 560, aim: true }, e: { max: 200, escape: true }, r: { max: 680, aim: true } },
+  scroll: { pref: 520, reach: 725, q: { max: 920, aim: true }, w: { max: 980, aim: true }, e: { max: 200, escape: true }, r: { max: 590, ground: true } },
 };
 
-const PROJ_SPEED = { longbow: 1200, firestaff: 820, froststaff: 880 };
+const PROJ_SPEED = { shuriken: 1250, scroll: 860 };
 // 스킬 투사체 속도 (조준 예측용)
-const SKILL_SPEED = { daggers: 1400, longbow: 1750, firestaff: 1100, froststaff: 1150, spear: 1350 };
+const SKILL_SPEED = { dagger: 1400, shuriken: 1500, scroll: 1300 };
 
 export function makeBotBrain(rng, skill) {
   return {
@@ -102,13 +100,13 @@ export function botThink(game, p, dt) {
 
 // 시간별 목표 생존 인원: 8분 판이 되도록 (2분 ≈ 14명, 4분 ≈ 10명, 6분 ≈ 5명)
 function desiredAlive(game) {
-  const k = Math.min(1, Math.max(0, game.time / 490));
+  const k = Math.min(1, Math.max(0, game.time / 590));
   return game.startCount * (1 - k ** 1.5);
 }
 
-// 상대와 나의 전투력 비교 (체력 × 레벨 × 증강 수)
+// 상대와 나의 전투력 비교 (체력 × 무기 등급 × 증강 수)
 function power(u) {
-  return u.hp * (1 + 0.015 * (u.level - 1)) * (1 + 0.05 * u.augs.length);
+  return u.hp * (1 + 0.06 * u.gear.weapon.rarity) * (1 + 0.08 * u.augs.length);
 }
 
 function decide(game, p, b) {
@@ -159,7 +157,8 @@ function decide(game, p, b) {
   const allowed = defending || !enemy || !enemy.isBot || pace;
   if (enemy && allowed && (ed < engage || defending) && p.invulnT <= 0 && (ganged < 1 || defending)) {
     const courage = defending ? 0.85 + b.aggro * 0.5 : (0.35 + ramp * 0.25) + b.aggro * 0.5;
-    const brave = power(p) * courage > power(enemy) || enemy.hp < enemy.maxHp * 0.25;
+    const melee = AI[p.gear.weapon.type].pref < 200;
+    const brave = power(p) * courage * (melee && ed < 300 ? 1.3 : 1) > power(enemy) || enemy.hp < enemy.maxHp * 0.25;
     if (brave) {
       b.mode = 'fight';
       b.target = enemy.id;
@@ -171,12 +170,39 @@ function decide(game, p, b) {
       return;
     }
   }
-  // 상자 (근처에 적이 없을 때)
+  // 에픽 보물은 근처에 적이 있어도 노림 (뺏고 뺏기는 싸움)
+  for (const c of game.chests) {
+    if (c.open || (c.kind !== 'epic' && c.kind !== 'titan')) continue;
+    if (dist2(p.x, p.y, c.x, c.y) > 900 * 900) continue;
+    b.mode = 'chest';
+    b.goal = [c.x, c.y];
+    return;
+  }
+  // 바닥의 더 좋은 무기
+  if (!enemy || ed > 400) {
+    let item = null;
+    let i2 = 700 * 700;
+    for (const it of game.items) {
+      if (!canTake(p.gear.weapon, it) || it.rarity <= p.gear.weapon.rarity) continue;
+      const d = dist2(p.x, p.y, it.x, it.y);
+      if (d < i2) {
+        i2 = d;
+        item = it;
+      }
+    }
+    if (item) {
+      b.mode = 'item';
+      b.goal = [item.x, item.y];
+      b.itemId = item.id;
+      return;
+    }
+  }
+  // 상자 (근처에 적이 없을 때, 잠긴 캠프 상자는 몹부터)
   if (!enemy || ed > 450) {
     let chest = null;
     let c2 = 900 * 900;
     for (const c of game.chests) {
-      if (c.open) continue;
+      if (c.open || game.chestLocked(c)) continue;
       if (z.dps > 0 && dist2(c.x, c.y, z.x, z.y) > z.r * z.r) continue;
       const d = dist2(p.x, p.y, c.x, c.y);
       if (d < c2) {
@@ -194,11 +220,16 @@ function decide(game, p, b) {
   // 사냥 (다른 플레이어가 잡고 있는 몬스터는 초반에 피함)
   let mon = null;
   let md = 900 * 900;
+  const rar = p.gear.weapon.rarity;
   for (const m of game.monsters) {
-    if (!m.alive || m.type === 'guardian') continue;
-    if (m.type === 'elite' && (p.level < 3 || hpR < 0.6)) continue;
+    if (!m.alive) continue;
+    const def = MONSTERS[m.type];
+    if (m.type === 'elite' && (rar < 1 || hpR < 0.6)) continue;
+    // 에픽 몬스터: 무기가 어느 정도 좋고 체력이 넉넉할 때 (큰 에픽은 더 세야)
+    if (def.epic && (hpR < 0.65 || rar < (def.titan ? 3 : 2) || game.time < 100)) continue;
     let d = dist2(p.x, p.y, m.x, m.y);
     if (m.type === 'elite') d *= 0.7;
+    if (def.epic) d *= 0.5;
     if (d >= md) continue;
     if (game.time < 90) {
       let crowded = false;
@@ -260,10 +291,11 @@ function act(game, p, b, dt) {
           p.input.ti = 0;
           press(p, 'act');
         }
-      } else if (b.mode === 'item' && d < 50) {
+      } else if (b.mode === 'item' && d < 60) {
         p.input.ti = b.itemId;
         press(p, 'act');
         b.mode = 'wander';
+        b.thinkT = 0.3;
       } else {
         [out.mx, out.my] = navDir(game, p, b, b.goal[0], b.goal[1]);
       }
@@ -412,6 +444,17 @@ function combat(game, p, b, t, out, dt) {
   out.my = my;
   if (d < reach) out.atk = true;
 
+  // 단도: 그림자가 적에게 더 가까우면 W를 다시 눌러 자리 바꾸기 (파고들기)
+  if (w === 'dagger' && t.isPlayer && !p.act) {
+    for (const a of game.areas) {
+      if (!a.alive || a.kind !== 'shadow' || a.owner !== p.id || a.swapped || a.slot !== 'w') continue;
+      if (Math.sqrt(dist2(a.x, a.y, t.x, t.y)) + 120 < d && rng() < 0.15 + b.skill * 0.3) {
+        press(p, 'w');
+        b.actCd = 0.2;
+        return;
+      }
+    }
+  }
   if (b.actCd > 0 || p.act || p.dashT > 0) return;
   const k = 0.6 * b.skill;
   const px = t.x + b.tvx * k + (rng() - 0.5) * 70 * (1 - b.skill);
@@ -431,7 +474,7 @@ function combat(game, p, b, t, out, dt) {
       const ld = (d / SKILL_SPEED[w]) * b.skill;
       out.aim = Math.atan2(t.y + b.tvy * ld - p.y, t.x + b.tvx * ld - p.x) + (rng() - 0.5) * b.aimErr * 0.6;
     }
-    if (key === 'r' && !t.isPlayer && t.type !== 'guardian' && t.type !== 'elite') return false;
+    if (key === 'r' && !t.isPlayer && !MONSTERS[t.type].epic && t.type !== 'elite') return false;
     press(p, key);
     b.actCd = 0.25;
     return true;

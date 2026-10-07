@@ -9,15 +9,19 @@ export const COSMETIC_TYPES = {
 };
 
 export const COSMETICS = [
-  // 스킨: 몸 색, 테두리, 중심, 눈, 장식
-  { id: 'skin_shade', type: 'skin', name: '기본 망령', rarity: 0, price: 0, cur: 'free', body: '#7fd0ff', rim: '#e6fbff', core: '#ffffff', eye: '#10233a', acc: null },
-  { id: 'skin_ember', type: 'skin', name: '잿불 영혼', rarity: 1, price: 800, cur: 'obol', body: '#ff7a3d', rim: '#ffd29a', core: '#fff1c4', eye: '#3a0d00', acc: 'flame' },
-  { id: 'skin_verdant', type: 'skin', name: '엘리시움의 숨결', rarity: 1, price: 1200, cur: 'obol', body: '#4fdc8c', rim: '#d9ffe8', core: '#ffffff', eye: '#0b3320', acc: 'leaf' },
-  { id: 'skin_abyss', type: 'skin', name: '심연의 그림자', rarity: 2, price: 1500, cur: 'obol', body: '#3b1f6b', rim: '#b18cff', core: '#14081f', eye: '#ff4df0', acc: 'void' },
-  { id: 'skin_frost', type: 'skin', name: '서리 왕관', rarity: 2, price: 300, cur: 'gem', body: '#a8e9ff', rim: '#ffffff', core: '#e8fbff', eye: '#0a3550', acc: 'crown' },
-  { id: 'skin_bloodmoon', type: 'skin', name: '핏빛 달', rarity: 2, price: 450, cur: 'gem', body: '#b3122e', rim: '#ff8095', core: '#ffd0d8', eye: '#ffe14d', acc: 'moon' },
-  { id: 'skin_gold', type: 'skin', name: '황금 영웅', rarity: 3, price: 600, cur: 'gem', body: '#ffbe2e', rim: '#fff3c2', core: '#ffffff', eye: '#4a2a00', acc: 'laurel' },
-  { id: 'skin_star', type: 'skin', name: '별에서 온 아이', rarity: 3, price: 900, cur: 'gem', body: '#1b1f4d', rim: '#9ab8ff', core: '#ffffff', eye: '#ffffff', acc: 'stars' },
+  // 스킨: 닌자 외형 (Ninja Adventure). sheet = client/assets/skins/<sheet>.png
+  { id: 'skin_blue', type: 'skin', name: '푸른 닌자', rarity: 0, price: 0, cur: 'free', sheet: 'NinjaBlue' },
+  { id: 'skin_red', type: 'skin', name: '붉은 닌자', rarity: 0, price: 0, cur: 'free', sheet: 'NinjaRed' },
+  { id: 'skin_green', type: 'skin', name: '초록 닌자', rarity: 0, price: 0, cur: 'free', sheet: 'NinjaGreen' },
+  { id: 'skin_gray', type: 'skin', name: '잿빛 닌자', rarity: 0, price: 0, cur: 'free', sheet: 'NinjaGray' },
+  { id: 'skin_yellow', type: 'skin', name: '노란 닌자', rarity: 1, price: 600, cur: 'obol', sheet: 'NinjaYellow' },
+  { id: 'skin_dark', type: 'skin', name: '어둠 닌자', rarity: 1, price: 900, cur: 'obol', sheet: 'NinjaDark' },
+  { id: 'skin_eskimo', type: 'skin', name: '설원 닌자', rarity: 1, price: 1200, cur: 'obol', sheet: 'NinjaEskimo' },
+  { id: 'skin_masked', type: 'skin', name: '가면 닌자', rarity: 2, price: 1600, cur: 'obol', sheet: 'NinjaMasked' },
+  { id: 'skin_leaf', type: 'skin', name: '잎새 닌자', rarity: 2, price: 250, cur: 'gem', sheet: 'NinjaLeaf' },
+  { id: 'skin_water', type: 'skin', name: '물결 닌자', rarity: 2, price: 300, cur: 'gem', sheet: 'NinjaWater' },
+  { id: 'skin_fire', type: 'skin', name: '화염 닌자', rarity: 3, price: 450, cur: 'gem', sheet: 'NinjaFire' },
+  { id: 'skin_thunder', type: 'skin', name: '번개 닌자', rarity: 3, price: 450, cur: 'gem', sheet: 'NinjaThunder' },
 
   // 대시 잔상
   { id: 'trail_none', type: 'trail', name: '기본 잔상', rarity: 0, price: 0, cur: 'free', color: '#bfe9ff', style: 'ghost' },
@@ -45,17 +49,17 @@ export const COSMETICS = [
 
   // 칭호 (이름 아래 표시)
   { id: 'title_none', type: 'title', name: '(없음)', rarity: 0, price: 0, cur: 'free', text: '' },
-  { id: 'title_rookie', type: 'title', name: '명계 신입', rarity: 0, price: 0, cur: 'free', text: '명계 신입' },
-  { id: 'title_hunter', type: 'title', name: '망령 사냥꾼', rarity: 1, cur: 'achv', achv: { stat: 'monsterKills', goal: 300, label: '몬스터 300마리 처치' }, text: '망령 사냥꾼' },
-  { id: 'title_slayer', type: 'title', name: '영혼 수확자', rarity: 2, cur: 'achv', achv: { stat: 'kills', goal: 50, label: '플레이어 50명 처치' }, text: '영혼 수확자' },
-  { id: 'title_lord', type: 'title', name: '스틱스의 지배자', rarity: 3, cur: 'achv', achv: { stat: 'wins', goal: 10, label: '10회 우승' }, text: '스틱스의 지배자' },
-  { id: 'title_favored', type: 'title', name: '신들의 총애', rarity: 2, price: 200, cur: 'gem', text: '신들의 총애' },
+  { id: 'title_rookie', type: 'title', name: '초보 닌자', rarity: 0, price: 0, cur: 'free', text: '초보 닌자' },
+  { id: 'title_hunter', type: 'title', name: '몬스터 사냥꾼', rarity: 1, cur: 'achv', achv: { stat: 'monsterKills', goal: 300, label: '몬스터 300마리 처치' }, text: '몬스터 사냥꾼' },
+  { id: 'title_slayer', type: 'title', name: '그림자 사신', rarity: 2, cur: 'achv', achv: { stat: 'kills', goal: 50, label: '플레이어 50명 처치' }, text: '그림자 사신' },
+  { id: 'title_lord', type: 'title', name: '섬의 지배자', rarity: 3, cur: 'achv', achv: { stat: 'wins', goal: 10, label: '10회 우승' }, text: '섬의 지배자' },
+  { id: 'title_favored', type: 'title', name: '전설의 닌자', rarity: 2, price: 200, cur: 'gem', text: '전설의 닌자' },
 ];
 
 export const COSMETIC_MAP = Object.fromEntries(COSMETICS.map((c) => [c.id, c]));
 
 export const DEFAULT_COSMETICS = {
-  skin: 'skin_shade',
+  skin: 'skin_blue',
   trail: 'trail_none',
   slash: 'slash_default',
   killfx: 'kill_soul',
@@ -82,7 +86,7 @@ export function randomCosmetics(rng) {
   const out = { ...DEFAULT_COSMETICS };
   for (const type of Object.keys(DEFAULT_COSMETICS)) {
     if (type === 'title') continue;
-    if (rng() < 0.55) {
+    if (type === 'skin' || rng() < 0.55) {
       const list = COSMETICS.filter((c) => c.type === type);
       out[type] = list[Math.floor(rng() * list.length)].id;
     }

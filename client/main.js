@@ -1,15 +1,15 @@
 // 진입점: 메뉴 / 상점 / 로비 / 게임 / 탈락·결과 화면 연결
-import { WEAPONS, WEAPON_IDS } from '../shared/items.js';
-import { COSMETICS, COSMETIC_TYPES, RARITY_LABEL, RARITY_COLOR } from '../shared/cosmetics.js';
+import { WEAPONS, WEAPON_IDS, RARITIES, weaponId, skillDesc } from '../shared/items.js';
+import { COSMETICS, COSMETIC_MAP, COSMETIC_TYPES, RARITY_LABEL, RARITY_COLOR } from '../shared/cosmetics.js';
 import { AUG_BY_ID, AUG_TIERS } from '../shared/augments.js';
-import { computeRewards, MAX_PLAYERS } from '../shared/constants.js';
+import { computeRewards, MAX_PLAYERS, COUNTER_BONUS } from '../shared/constants.js';
 import { PixelRenderer } from './pixel.js';
 import { Input } from './input.js';
 import { Hud, escapeHtml } from './hud.js';
 import { GameClient } from './game.js';
 import { WSTransport, LocalTransport } from './net.js';
 import { Profile, STREAK_REWARDS, GEM_PACKS } from './profile.js';
-import { loadAssets, IMG, lookOf, FLOOR, SPR } from './assets.js';
+import { loadAssets, IMG, FLOOR, SPR, WEAPON_LOOK } from './assets.js';
 
 const $ = (id) => document.getElementById(id);
 const STANDALONE = !!window.__STYX_STANDALONE__ || location.protocol === 'file:';
@@ -109,12 +109,13 @@ function drawMenuBg(t) {
 requestAnimationFrame(drawMenuBg);
 
 // ---------------- 캐릭터 미리보기 (도트 스프라이트) ----------------
+// 닌자 그리기: 스킨 시트 + 손에 든 무기 아이콘
 function drawSprite(c, weapon, t, opts = {}) {
   const g = c.getContext('2d');
   g.imageSmoothingEnabled = false;
   g.clearRect(0, 0, c.width, c.height);
-  const look = lookOf(weapon);
-  const img = IMG[`chars/${look.char}.png`];
+  const skin = COSMETIC_MAP[opts.skin || profile.d.equipped.skin] || COSMETIC_MAP.skin_blue;
+  const img = IMG[`skins/${skin.sheet}.png`];
   if (!img || !img.width) return;
   const s = Math.floor(c.width / 16) - (opts.pad ? 1 : 0);
   // 아래 → 오른쪽 → 위 → 왼쪽으로 돌면서 걷기
@@ -123,9 +124,17 @@ function drawSprite(c, weapon, t, opts = {}) {
   const row = opts.still ? 0 : Math.floor(t / 130) % 4;
   const ox = Math.floor((c.width - 16 * s) / 2);
   const oy = Math.floor((c.height - 16 * s) / 2);
-  const sh = IMG['chars/Shadow.png'];
+  const sh = IMG['fx/shadow.png'];
   if (sh && sh.width) g.drawImage(sh, ox + 2 * s, oy + 13 * s, 12 * s, 7 * s);
   g.drawImage(img, col * 16, row * 16, 16, 16, ox, oy, 16 * s, 16 * s);
+  if (weapon && !opts.noWeapon) {
+    const wl = WEAPON_LOOK[weapon];
+    const wi = wl && IMG[wl.icon];
+    if (wi && wi.width) {
+      const k = (s * (weapon === 'dagger' ? 1 : 0.7)) | 0 || 1;
+      g.drawImage(wi, ox + 11 * s, oy + 6 * s, wi.width * k, wi.height * k);
+    }
+  }
 }
 
 function previewLoop(t) {
@@ -159,8 +168,8 @@ function renderWeapons() {
     const b = document.createElement('button');
     b.className = `wcard${profile.d.weapon === id ? ' sel' : ''}`;
     b.style.setProperty('--wc', w.color);
-    b.innerHTML = `<canvas width="48" height="48" data-w="${id}"></canvas><div class="wn">${w.name}</div><div class="wr">${w.role}</div>`;
-    b.title = `우클릭 ${w.basic.name}: ${w.basic.desc}\nQ ${w.q.name}: ${w.q.hint}\nW ${w.w.name}: ${w.w.hint}\nE ${w.e.name}: ${w.e.hint}\nR ${w.r.name}: ${w.r.hint}`;
+    b.innerHTML = `<canvas width="48" height="48" data-w="${id}"></canvas><div class="wn">${w.icon} ${w.name}</div><div class="wr">${w.role}</div>`;
+    b.title = `우클릭 ${w.basic.name}: ${skillDesc(w.basic, true)}\nQ ${w.q.name}: ${w.q.hint}\nW ${w.w.name}: ${w.w.hint}\nE ${w.e.name}: ${w.e.hint}\nR ${w.r.name}: ${w.r.hint}`;
     b.onclick = () => {
       profile.d.weapon = id;
       profile.save();
@@ -168,8 +177,10 @@ function renderWeapons() {
     };
     box.appendChild(b);
   }
-  const w = WEAPONS[profile.d.weapon] || WEAPONS.greatsword;
-  $('class-info').innerHTML = `<b style="color:${w.color}">${w.name}</b><br>${w.role}<br>Q ${w.q.name} · W ${w.w.name}<br>E ${w.e.name} · R ${w.r.name}`;
+  const w = WEAPONS[profile.d.weapon] || WEAPONS.dagger;
+  const beats = WEAPONS[w.beats];
+  const lost = Object.values(WEAPONS).find((x) => x.beats === w.id);
+  $('class-info').innerHTML = `<b style="color:${w.color}">${w.icon} ${w.name}</b><br>${w.role}<br>Q ${w.q.name} · W ${w.w.name}<br>E ${w.e.name} · R ${w.r.name}<br><span style="color:#7ed957">강함 → ${beats.name} (피해 +${Math.round(COUNTER_BONUS * 100)}%)</span> · <span style="color:#ff8a8a">약함 ← ${lost.name}</span>`;
 }
 
 function renderQuests() {
@@ -203,6 +214,7 @@ function renderMenu() {
   renderQuests();
 }
 
+profile.d.weapon = weaponId(profile.d.weapon);
 $('name').value = profile.d.name || '';
 $('name').addEventListener('input', () => {
   profile.d.name = $('name').value;
@@ -314,9 +326,13 @@ $('room-join-go').onclick = () => {
 };
 
 const TIPS = [
-  '큰 상자와 현상금 주머니는 골드·프리즘 등급이 잘 나옵니다.',
+  '큰 상자와 현상금 주머니는 높은 등급 무기가 잘 나옵니다.',
+  '단도는 두루마리, 두루마리는 표창, 표창은 단도에게 강합니다 (피해 +10%).',
+  '같은 계열 증강을 2·3개 모으면 세트 효과! 들고 있는 무기 계열은 +1로 쳐요.',
+  '에픽 몬스터는 막타를 친 사람이 보물을 얻습니다. 체력 30%가 되면 모두에게 알려져요.',
+  '테두리 색이 진한 닌자는 높은 등급 무기를 든 강한 적입니다.',
   '수풀 안에 있으면 멀리 있는 적에게 보이지 않아요. 공격하면 들킵니다.',
-  '정글 캠프를 다 잡으면 상자가 떨어집니다.',
+  '캠프 상자는 몹을 다 잡아야 열립니다. 몹은 강화석을 줘요.',
   '자기장 예고(흰 점선)가 뜨면 미리 안쪽으로 이동하세요.',
   '킬을 2번 이상 하면 현상금이 붙어 지도에 표시됩니다.',
   'D 구르기는 짧게 무적입니다. 큰 스킬을 피하세요!',
@@ -416,7 +432,7 @@ function rewardText(got) {
 function onDeath(me) {
   input.reset();
   const total = MAX_PLAYERS;
-  const got = applyResult({ placement: me.pl, kills: me.k, deaths: 1, chests: me.co || 0, monsterKills: me.mk || 0, augs: client && client.ui ? client.ui.augs : [] }, total);
+  const got = applyResult({ placement: me.pl, kills: me.k, deaths: 1, chests: me.co || 0, monsterKills: me.mk || 0, augs: client && client.ui ? client.ui.augs.map((g) => g.id) : [] }, total);
   $('death-place').textContent = `#${me.pl}`;
   const killer = me.kb ? client.nameOf(me.kb) : '';
   $('death-sub').textContent = killer ? `${killer}에게 쓰러졌습니다` : '쓰러졌습니다';
@@ -424,6 +440,7 @@ function onDeath(me) {
     ['처치', me.k],
     ['상자', me.co || 0],
     ['증강', client && client.ui ? client.ui.augs.length : 0],
+    ['무기', client && client.ui ? `${RARITIES[client.ui.gear.weapon.rarity].name}` : '-'],
     ['피해', (me.dmg || 0).toLocaleString()],
   ]
     .map(([k, v]) => `<div><b>${v}</b><small>${k}</small></div>`)
@@ -460,24 +477,25 @@ function onGameEnd(m) {
     $('end-stats').innerHTML = [
       ['순위', `#${me.placement}`],
       ['처치', me.kills],
-      ['상자', me.chests],
-      ['레벨', me.level],
+      ['어시스트', me.assists || 0],
+      ['에픽', me.epicKills || 0],
+      ['무기', `${RARITIES[me.rarity].name}\u00a0${WEAPONS[me.weapon].name}`],
       ['피해', me.dmg.toLocaleString()],
     ]
       .map(([k, v]) => `<div><b>${v}</b><small>${k}</small></div>`)
       .join('');
     $('end-augs').innerHTML = me.augs
-      .map((id) => {
+      .map((id, i) => {
         const a = AUG_BY_ID[id];
-        return a ? `<span class="aug-chip" style="--tc:${AUG_TIERS[a.tier].color}"><i>${a.icon}</i>${a.name}</span>` : '';
+        return a ? `<span class="aug-chip" style="--tc:${AUG_TIERS[(me.augTiers && me.augTiers[i]) || 0].color}"><i>${a.icon}</i>${a.name}</span>` : '';
       })
       .join('');
     $('end-rewards').textContent = got ? rewardText(got) : '';
     const qs = profile.quests().filter((q) => !q.claimed && q.progress >= q.goal);
     $('end-quests').textContent = qs.length ? `완료한 퀘스트 ${qs.length}개 — 메뉴에서 보상을 받으세요` : '';
   }
-  $('end-table').innerHTML = `<table><tr><th>#</th><th>이름</th><th>직업</th><th>처치</th><th>증강</th></tr>${m.results
-    .map((r) => `<tr class="${r.id === m.you ? 'me' : ''}"><td>${r.placement}</td><td>${escapeHtml(r.name)}</td><td>${WEAPONS[r.weapon].name}</td><td>${r.kills}</td><td>${r.augs.length}</td></tr>`)
+  $('end-table').innerHTML = `<table><tr><th>#</th><th>이름</th><th>무기</th><th>처치</th><th>증강</th></tr>${m.results
+    .map((r) => `<tr class="${r.id === m.you ? 'me' : ''}"><td>${r.placement}</td><td>${escapeHtml(r.name)}</td><td style="color:${RARITIES[r.rarity].color}">${RARITIES[r.rarity].name} ${WEAPONS[r.weapon].name}</td><td>${r.kills}</td><td>${r.augs.map((id) => (AUG_BY_ID[id] ? AUG_BY_ID[id].icon : '')).join('')}</td></tr>`)
     .join('')}</table>`;
   $('end-ad').disabled = false;
   $('end-ad').textContent = '▶ 광고 보고 코인 2배';
@@ -519,10 +537,9 @@ $('end-again').onclick = nextGame;
 $('end-menu').onclick = backToMenu;
 
 // ---------------- 상점 ----------------
-let storeTab = 'trail';
+let storeTab = 'skin';
 let storeMode = 'store';
-// 스킨은 도트 캐릭터용으로 다시 만들 때까지 숨김
-const STORE_TYPES = Object.entries(COSMETIC_TYPES).filter(([t]) => t !== 'skin');
+const STORE_TYPES = Object.entries(COSMETIC_TYPES).filter(([t]) => t !== 'slash');
 
 function previewCosmetic(c, cv, t) {
   const ctx = cv.getContext('2d');
@@ -530,6 +547,7 @@ function previewCosmetic(c, cv, t) {
   ctx.clearRect(0, 0, cv.width, cv.height);
   const w = cv.width;
   const h = cv.height;
+  if (c.type === 'skin') return drawSprite(cv, profile.d.weapon, t, { skin: c.id, noWeapon: true });
   if (c.type === 'trail') {
     for (let i = 0; i < 9; i++) {
       const k = i / 8;
@@ -664,7 +682,8 @@ $('btn-help').onclick = () => {
   $('help-weapons').innerHTML = WEAPON_IDS.map((id) => {
     const w = WEAPONS[id];
     const row = (k) => `<br>${k.toUpperCase()} ${w[k].icon || ''} <b>${w[k].name}</b> — ${w[k].hint || w[k].desc}`;
-    return `<div class="hw" style="border-color:${w.color}88"><b style="color:${w.color}">${w.icon} ${w.name}</b> · ${w.role}<br>우클릭: ${w.basic.name} — ${w.basic.desc}${['q', 'w', 'e', 'r'].map(row).join('')}</div>`;
+    const tiers = w.tiers.map((t, i) => (t ? `<br><span style="color:${RARITIES[i].color}">${RARITIES[i].name}</span>: ${t.desc}` : '')).join('');
+    return `<div class="hw" style="border-color:${w.color}88"><b style="color:${w.color}">${w.icon} ${w.name}</b> · ${w.role} · <span style="color:#7ed957">${WEAPONS[w.beats].name}에게 강함 (피해 +${Math.round(COUNTER_BONUS * 100)}%)</span>${w.passive ? `<br>패시브 ${w.passive.name}: ${w.passive.desc}` : ''}<br>우클릭: ${w.basic.name} — ${skillDesc(w.basic, true)}${['q', 'w', 'e', 'r'].map(row).join('')}<br><b>등급 효과</b>${tiers}</div>`;
   }).join('');
   openModal('help');
 };

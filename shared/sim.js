@@ -1,9 +1,9 @@
 // 게임 시뮬레이션 (서버 권한). 서버와 브라우저 연습 모드가 같은 코드를 실행한다.
-// 16인 배틀로얄: 착지 지점 선택 → 상자·사냥으로 증강 → 자기장 5단계 → 최후의 1인
+// 16인 배틀로얄: 무기 선택 → 착지 → 상자깡(무기)·사냥(강화석)·처치/에픽(증강) → 자기장 5단계 → 최후의 1인
 import { TAU, clamp, dist2, lerp, makeRng, shuffle, segPointDist2 } from './math.js';
 import * as C from './constants.js';
-import { WEAPONS, WEAPON_IDS, makeItem } from './items.js';
-import { AUGMENTS, AUG_BY_ID, rollTier, pickOffer } from './augments.js';
+import { WEAPONS, WEAPON_IDS, RARITIES, STONE_COST, MYTHIC, makeWeapon, weaponId, canTake, rollWeaponRarity } from './items.js';
+import { AUG_BY_ID, AUG_SLOTS, augValue, familyCounts, randomAugs, rollAugTier } from './augments.js';
 import { MONSTERS, MSTATE, updateMonster } from './monsters.js';
 import { MAPS, DEFAULT_MAP, CAMP_TYPES } from './maps.js';
 import { NavGrid } from './nav.js';
@@ -35,8 +35,12 @@ export const PF = {
   MARK: 16384,
   BLEED: 32768,
 };
-export const CHEST_KINDS = ['small', 'big', 'bounty'];
+export const CHEST_KINDS = ['small', 'big', 'bounty', 'epic', 'titan'];
+// 상자 여는 시간 (에픽 보물은 오래 걸리고, 맞으면 끊김)
+export const CHEST_TIME = { small: C.CHEST_OPEN, big: C.CHEST_OPEN, bounty: 1.2, epic: 3, titan: 3 };
 export const ZONE_STAGE = ['wait', 'warn', 'shrink'];
+export const LAIR_STATE = ['sleep', 'alive', 'fight', 'dead', 'gone'];
+export const OFFER_KINDS = ['kill', 'epic', 'titan'];
 
 function makeStatus() {
   return {
@@ -54,6 +58,7 @@ function makeStatus() {
     empT: 0,
     emp: null,
     burnT: 0,
+    burnSrc: 0,
     bleed: null,
     mark: null,
     shield: 0,
@@ -66,7 +71,7 @@ function makeStatus() {
 export const PRESS = C.PRESS;
 
 export function emptyInput() {
-  return { seq: 0, mx: 0, my: 0, aim: 0, atk: false, cx: 0, cy: 0, ti: 0, at: 0, lx: null, ly: null, po: 0, pk: 0, p: new Array(C.PRESS_N).fill(0) };
+  return { seq: 0, mx: 0, my: 0, aim: 0, atk: false, cx: 0, cy: 0, ti: 0, at: 0, po: 0, pk: 0, pr: 0, p: new Array(C.PRESS_N).fill(0) };
 }
 
 const num = (v, d = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
@@ -81,23 +86,16 @@ export function sanitizeInput(raw, prev) {
   inp.my = clamp(num(raw.my), -1, 1);
   inp.aim = num(raw.a, prev.aim);
   inp.atk = !!raw.k;
-  inp.cx = clamp(num(raw.cx, prev.cx), -5000, 5000);
-  inp.cy = clamp(num(raw.cy, prev.cy), -5000, 5000);
+  inp.cx = clamp(num(raw.cx, prev.cx), -6000, 6000);
+  inp.cy = clamp(num(raw.cy, prev.cy), -6000, 6000);
   const pr = Array.isArray(raw.p) ? raw.p : [];
   for (let i = 0; i < C.PRESS_N; i++) inp.p[i] = Math.max(prev.p[i], int(pr[i], prev.p[i]));
   inp.ti = int(raw.ti, 0);
   inp.at = int(raw.at, 0); // 롤식 기본 공격 대상
-  // 착지 지점 (착지 단계에서만 의미 있음)
-  if (typeof raw.lx === 'number' && typeof raw.ly === 'number') {
-    inp.lx = clamp(num(raw.lx), -5000, 5000);
-    inp.ly = clamp(num(raw.ly), -5000, 5000);
-  } else {
-    inp.lx = prev.lx;
-    inp.ly = prev.ly;
-  }
-  // 증강 선택: 어떤 제안(po)의 몇 번째(pk 1~3)를 골랐는지
+  // 증강 선택: 제안(po)의 몇 번째 카드(pk 1~3, 4 = 건너뛰기), 칸이 꽉 찼으면 바꿀 칸(pr 1~3)
   inp.po = int(raw.po, 0);
   inp.pk = int(raw.pk, 0);
+  inp.pr = int(raw.pr, 0);
   return inp;
 }
 
@@ -112,6 +110,7 @@ export class Game {
     this.camps = [];
     this.walls = [];
     this.bushes = [];
+    this.lairs = [];
     this.time = 0;
     this.tick = 0;
     this.state = 'waiting';
@@ -132,16 +131,13 @@ export class Game {
     this.R = 2000;
     this.zone = null;
     this.startCount = 0;
-    this.elimCount = 0;
     this.results = null;
     this.winner = 0;
     this.endReason = '';
   }
 
-  // ---------------- 참가자 ----------------
-  addPlayer({ name = '닌자', isBot = false, weapon = 'greatsword', cosmetics = null, skill = 0.5 } = {}) {
+  addPlayer({ name = '닌자', isBot = false, weapon = 'dagger', cosmetics = null, skill = 0.5 } = {}) {
     const id = this.nextId++;
-    const w = WEAPONS[weapon] ? weapon : 'greatsword';
     const p = {
       id,
       isPlayer: true,
@@ -167,24 +163,25 @@ export class Game {
       hp: C.BASE_HP,
       maxHp: C.BASE_HP,
       level: 1,
-      xp: 0,
-      xpNext: C.xpForLevel(1),
-      gear: { weapon: makeItem('weapon', w, 0) },
-      grade: { q: 0, w: 0, e: 0 },
+      gear: { weapon: makeWeapon(weaponId(weapon), 0) },
+      stones: 0,
       cd: { q: 0, w: 0, e: 0, d: 0 },
       cdMax: { q: 1, w: 1, e: 1, d: C.ROLL.cd },
-      // 증강
+      rolls: 1, // 바람 2세트면 구르기 2번
+      rollT: 0,
+      // 증강: [{ id, tier }] 최대 3칸
       augs: [],
       aug: {},
+      fam: {},
       stats: {},
       offers: [],
-      luck: 0,
       hunter: 0,
       basicN: 0,
-      undyingUsed: false,
       secondT: 0,
-      meteorT: 5,
-      recast: null,
+      meteorT: 6,
+      stormT: 3,
+      steelT: 10,
+      hitters: new Map(), // 최근에 나를 때린 플레이어 → 시각 (어시스트·다수 피격 판정)
       wantAct: null,
       dr: 0,
       ult: 0,
@@ -201,10 +198,12 @@ export class Game {
       lastHitByT: -99,
       inBush: -1,
       kills: 0,
+      assists: 0,
       deaths: 0,
       dmgDealt: 0,
       monsterKills: 0,
       chestsOpened: 0,
+      epicKills: 0,
       multi: 0,
       lastKillT: -99,
       placement: 0,
@@ -287,37 +286,22 @@ export class Game {
     this.startCount = this.players.size;
     this.loadMap(this.mapId);
     this.zone = { x: 0, y: 0, r: this.R + 300, fx: 0, fy: 0, fr: this.R + 300, tx: 0, ty: 0, tr: this.R + 300, phase: -1, stage: 'wait', stageT: 0, dps: 0 };
-    // 봇은 유적·마을·무작위 지점 중 하나를 고름
-    // 봇 착지: 30%는 유적·마을, 나머지는 섬 곳곳에 흩어짐
-    for (const p of this.players.values()) {
-      if (!p.isBot) continue;
-      if (this.rng() < 0.3) {
-        const q = this.map.pois[Math.floor(this.rng() * this.map.pois.length)];
-        p.input.lx = q.x + this.rng.range(-260, 260);
-        p.input.ly = q.y + this.rng.range(-260, 260);
-      } else {
-        const a = this.rng() * TAU;
-        const d = this.rng.range(0.4, 0.9) * this.R;
-        p.input.lx = Math.cos(a) * d;
-        p.input.ly = Math.sin(a) * d;
-      }
-    }
+    // 고정 시작 지점: 16곳(모두 같은 구성)을 무작위로 한 곳씩 나눠 줌
+    const spots = shuffle(this.map.spawns.map((q) => q), this.rng);
+    let i = 0;
+    for (const p of this.players.values()) p.spawn = spots[i++ % spots.length];
     this.state = 'landing';
     this.landT = C.LANDING_TIME;
   }
 
-  // 착지: 고른 지점 근처의 빈 곳에 내려놓음 (안 고른 사람은 섬 가장자리 무작위)
+  // 착지: 각자 받은 시작 지점에 내려놓음
   land() {
     const placed = [];
     for (const p of shuffle([...this.players.values()], this.rng)) {
       if (p.left) continue;
-      let tx = p.input.lx;
-      let ty = p.input.ly;
-      if (tx == null || ty == null) {
-        const s = this.map.spawns[Math.floor(this.rng() * this.map.spawns.length)];
-        tx = s[0];
-        ty = s[1];
-      }
+      const sp = p.spawn || this.map.spawns[Math.floor(this.rng() * this.map.spawns.length)];
+      let tx = sp[0];
+      let ty = sp[1];
       const d = Math.sqrt(tx * tx + ty * ty);
       if (d > this.R - 120) {
         tx *= (this.R - 120) / d;
@@ -364,9 +348,11 @@ export class Game {
     this.bushes = m.bushes || [];
     if (!NAV_CACHE.has(m.id)) NAV_CACHE.set(m.id, new NavGrid(m.R, this.obstacles, m.walls));
     this.nav = NAV_CACHE.get(m.id);
-    this.chests = m.chests.map((c) => ({ id: this.nextId++, x: c.x, y: c.y, kind: c.kind || 'small', open: false }));
     // 엘리트 캠프는 1분 뒤부터
-    this.camps = m.camps.map((c) => ({ id: this.nextId++, x: c.x, y: c.y, type: c.type, mobs: [], respawnT: c.type === 'elite' ? 60 : 0, alive: false }));
+    this.camps = m.camps.map((c, i) => ({ id: this.nextId++, idx: i, x: c.x, y: c.y, type: c.type, mobs: [], respawnT: c.type === 'elite' ? 60 : 0, alive: false }));
+    // 캠프 상자는 캠프 몹을 다 잡아야 열림
+    this.chests = m.chests.map((c) => ({ id: this.nextId++, x: c.x, y: c.y, kind: c.kind || 'small', open: false, camp: c.camp != null ? this.camps[c.camp].id : 0 }));
+    this.lairs = (m.lairs || []).map((l) => ({ id: this.nextId++, x: l.x, y: l.y, kind: l.kind, boss: l.boss, state: 'sleep', t: l.kind === 'titan' ? C.TITAN_WAKE : C.EPIC_WAKE, mob: 0, warned: false, half: false }));
   }
 
   blocked(x, y, pad) {
@@ -386,6 +372,7 @@ export class Game {
       pois: this.map.pois,
       decor: this.map.decor || null,
       camps: this.camps.map((c) => [c.id, c.x, c.y, c.type]),
+      lairs: this.lairs.map((l) => [l.id, l.x, l.y, l.kind, l.boss]),
       seed: this.seed,
       matchTime: C.MATCH_TIME,
       landTime: C.LANDING_TIME,
@@ -444,6 +431,7 @@ export class Game {
     this.updateSouls(dt);
     this.updateZone(dt);
     this.updateSpawns(dt);
+    this.updateLairs(dt);
     if (this.tick % 30 === 0) this.cleanup();
     // 최종 자기장이 다 닫힌 뒤에도 끝나지 않으면 체력이 가장 많은 사람이 승리
     if (this.state === 'running' && this.time >= C.MATCH_TIME + 30) {
@@ -464,6 +452,7 @@ export class Game {
     }
     this.monsters = keep;
     this.souls = this.souls.filter((o) => o.alive).slice(-400);
+    if (this.items.length > 80) this.items.splice(0, this.items.length - 80);
   }
 
   updatePlayer(p, dt) {
@@ -478,13 +467,14 @@ export class Game {
       p.comboT -= dt;
       if (p.comboT <= 0) p.combo = 0;
     }
-    for (const k of ['q', 'w', 'e', 'd']) if (p.cd[k] > 0) p.cd[k] -= dt;
-    p.ult = Math.min(100, p.ult + C.ULT_PASSIVE * dt * (1 + (p.stats.ultGain || 0)));
+    for (const k of ['q', 'w', 'e']) if (p.cd[k] > 0) p.cd[k] -= dt;
+    this.updateRoll(p, dt);
+    p.ult = Math.min(100, p.ult + C.ULT_PASSIVE * dt);
     if (p.buffer) {
       p.buffer.t -= dt;
       if (p.buffer.t <= 0) p.buffer = null;
     }
-    this.updateOffers(p, dt);
+    this.updateOffers(p);
     this.updateAugTimers(p, dt);
 
     const pressed = (i) => {
@@ -527,17 +517,37 @@ export class Game {
       }
     }
     if (!p.outside && p.hp < p.maxHp) {
-      const rate = C.REGEN_BASE + (this.time - p.lastDmgT > C.REGEN_DELAY ? C.REGEN_RATE : 0) + (p.stats.regen || 0);
+      const rate = C.REGEN_BASE + (this.time - p.lastDmgT > C.REGEN_DELAY ? C.REGEN_RATE : 0);
       p.hp = Math.min(p.maxHp, p.hp + p.maxHp * rate * dt);
     }
+  }
+
+  // 구르기 충전: 바람 2세트면 2번까지 모아 둠
+  updateRoll(p, dt) {
+    const max = this.fam(p, 'wind', 2) ? 2 : 1;
+    if (p.rolls > max) p.rolls = max;
+    if (p.rolls >= max) {
+      p.cd.d = 0;
+      return;
+    }
+    p.cd.d -= dt;
+    if (p.cd.d <= 0) {
+      p.rolls++;
+      p.cd.d = p.rolls < max ? p.cdMax.d : 0;
+    }
+  }
+
+  // 전투에서 벗어나 있는지 (3초 동안 때리지도 맞지도 않음)
+  outOfCombat(p) {
+    return this.time - p.lastDmgT > C.CALM_TIME && this.time - p.lastAtkT > C.CALM_TIME;
   }
 
   playerSpeed(p, withAction) {
     if (p.st.stunT > 0 || p.st.rootT > 0) return 0;
     let s = C.BASE_SPEED * p.speedMult * this.slowMult(p);
-    if (p.st.sprintT > 0) s *= 1.6;
-    if (p.st.invisT > 0) s *= 1.25;
+    if (p.st.invisT > 0) s *= 1.2;
     if (p.st.hasteT > 0) s *= 1 + p.st.haste;
+    if (this.outOfCombat(p)) s *= 1 + C.CALM_SPEED;
     if (withAction) {
       if (p.act) s *= p.act.moveMult;
       if (p.channel) s = 0;
@@ -557,56 +567,100 @@ export class Game {
     }
   }
 
-  // 레벨·직업·증강에 따른 능력치
+  // ---------------- 능력치: 무기 등급 + 증강 + 세트 ----------------
+  fam(p, id, n) {
+    return (p.fam[id] || 0) >= n;
+  }
+
   recomputeStats(p) {
     const wd = WEAPONS[p.gear.weapon.type];
+    const rar = RARITIES[p.gear.weapon.rarity];
     const s = (p.stats = {});
-    for (const id of p.augs) {
-      const a = AUG_BY_ID[id];
-      if (a && a.stats) for (const k in a.stats) s[k] = (s[k] || 0) + a.stats[k];
+    const add = (k, v) => (s[k] = (s[k] || 0) + v);
+    p.aug = {};
+    for (const g of p.augs) p.aug[g.id] = augValue(g.id, g.tier);
+    const a = p.aug;
+    if (a.tough) add('hp', a.tough);
+    if (a.giant) {
+      add('hp', a.giant);
+      add('speed', -0.05);
+      add('size', 0.25);
     }
+    if (a.swift) add('speed', a.swift);
+    if (a.berserk) {
+      add('atkSpeed', a.berserk);
+      add('speed', 0.06);
+    }
+    if (a.hasty) add('atkSpeed', a.hasty);
+    if (a.vital) add('crit', a.vital);
+    if (a.leech) add('lifesteal', a.leech);
+    if (a.vampire) add('lifesteal', a.vampire);
+    if (a.roller) add('rollCdr', a.roller);
+    if (a.overload) add('cdr', a.overload);
+    p.fam = familyCounts(p.augs, wd.family);
+    if (this.fam(p, 'storm', 2)) add('cdr', 0.08);
     const ratio = p.maxHp > 0 ? p.hp / p.maxHp : 1;
-    p.maxHp = Math.round(C.BASE_HP * (wd.hp || 1) * C.levelMult(p.level) * (1 + (s.hp || 0)));
+    p.maxHp = Math.round(C.BASE_HP * (wd.hp || 1) * rar.mult * (1 + (s.hp || 0)));
     p.hp = Math.min(p.maxHp, Math.max(1, ratio * p.maxHp));
     p.speedMult = (wd.speed || 1) * (1 + (s.speed || 0));
-    p.cdMult = Math.max(0.4, 1 - (s.cdr || 0));
+    p.cdMult = Math.max(0.5, (1 - (s.cdr || 0)) * rar.cd);
     p.r = C.PLAYER_R * (1 + (s.size || 0));
     p.mass = 1 + (s.size || 0) * 2;
-    p.dr = 0;
+    p.dr = this.fam(p, 'steel', 2) ? 0.1 : 0;
     p.uiVer++;
   }
 
-  // ---------------- 상자 → 증강 ----------------
-  // 우클릭으로 고른 상자. 멀면 걸어가는 동안 기억해 두었다가 닿으면 열기 시작
+  // ---------------- 상자·무기 줍기 ----------------
+  // 우클릭으로 고른 상자·무기. 멀면 걸어가는 동안 기억해 두었다가 닿으면 실행
   interact(p, targetId) {
     if (!p.alive) return;
     if (targetId) {
-      p.wantAct = { id: targetId, t: 4 };
+      p.wantAct = { id: targetId, t: 5 };
       return;
     }
+    // 대상 없이 누르면 가까운 상자만 (무기는 우클릭으로 골라야 바뀜: 실수로 무기가 바뀌지 않게)
     for (const c of this.chests) {
-      if (!c.open && dist2(c.x, c.y, p.x, p.y) < C.INTERACT_RANGE ** 2) return this.startChannel(p, c);
+      if (!c.open && !this.chestLocked(c) && dist2(c.x, c.y, p.x, p.y) < C.INTERACT_RANGE ** 2) return this.startChannel(p, c);
     }
   }
 
   tryWantAct(p, dt) {
     const w = p.wantAct;
     w.t -= dt;
-    const c = this.chests.find((q) => q.id === w.id && !q.open);
-    if (!c || w.t <= 0) {
+    const it = this.items.find((q) => q.id === w.id);
+    const c = it ? null : this.chests.find((q) => q.id === w.id && !q.open);
+    const tgt = it || c;
+    if (!tgt || w.t <= 0) {
       p.wantAct = null;
       return;
     }
-    if (p.st.stunT > 0 || dist2(c.x, c.y, p.x, p.y) > C.INTERACT_RANGE ** 2) return;
+    if (p.st.stunT > 0 || dist2(tgt.x, tgt.y, p.x, p.y) > C.INTERACT_RANGE ** 2) return;
+    if (it) {
+      p.wantAct = null;
+      if (canTake(p.gear.weapon, it)) this.takeItem(p, it);
+      else this.emit({ e: 'nottake', to: p.id });
+      return;
+    }
+    if (this.chestLocked(c)) {
+      p.wantAct = null;
+      this.emit({ e: 'locked', to: p.id, id: c.id });
+      return;
+    }
     // 걸음을 멈춘 뒤에 열기 시작
     if (Math.abs(p.input.mx) + Math.abs(p.input.my) > 0.2 || p.act) return;
     p.wantAct = null;
     this.startChannel(p, c);
   }
 
+  chestLocked(c) {
+    if (!c.camp) return false;
+    const camp = this.camps.find((q) => q.id === c.camp);
+    return !!(camp && !camp.cleared); // 한 번이라도 다 잡아야 열림
+  }
+
   startChannel(p, c) {
     if (p.act || p.st.stunT > 0) return;
-    p.channel = { id: c.id, t: 0 };
+    p.channel = { id: c.id, t: 0, dur: CHEST_TIME[c.kind] || C.CHEST_OPEN };
     this.breakStealth(p);
   }
 
@@ -620,68 +674,193 @@ export class Game {
       return;
     }
     ch.t += dt;
-    if (ch.t >= C.CHEST_OPEN) {
+    if (ch.t >= ch.dur) {
       p.channel = null;
       this.openChest(p, c);
     }
   }
 
+  // 상자: 무기가 튀어나옴. 에픽 보물은 증강 + (큰 에픽은) 전설·신화 무기
   openChest(p, c) {
     c.open = true;
-    p.chestsOpened++;
-    const tier = rollTier(this.rng, c.kind, p.luck);
-    this.emit({ e: 'chest', id: c.id, x: c.x, y: c.y, r: tier, by: p.id, k: c.kind });
-    this.offerAugment(p, tier);
-    // 열린 상자는 잠시 뒤 사라짐
     c.goneT = this.time + 4;
+    p.chestsOpened++;
+    if (c.kind === 'epic' || c.kind === 'titan') {
+      const tier = rollAugTier(this.rng, c.kind);
+      this.emit({ e: 'chest', id: c.id, x: c.x, y: c.y, r: tier, by: p.id, k: c.kind, aug: 1 });
+      this.offerAugment(p, c.kind, randomAugs(this.rng, p.augs.map((g) => g.id)).map((id) => ({ id, tier })));
+      if (c.kind === 'titan') {
+        const rar = this.rng() < 0.35 ? MYTHIC : MYTHIC - 1;
+        this.dropItem(WEAPON_IDS[Math.floor(this.rng() * WEAPON_IDS.length)], rar, c.x, c.y + 40);
+      }
+      return;
+    }
+    const rar = rollWeaponRarity(this.rng, this.time, c.kind);
+    const type = WEAPON_IDS[Math.floor(this.rng() * WEAPON_IDS.length)];
+    this.emit({ e: 'chest', id: c.id, x: c.x, y: c.y, r: rar, by: p.id, k: c.kind, w: type });
+    // 상자 앞 (여는 사람 쪽)에 떨어뜨림
+    const a = Math.atan2(p.y - c.y, p.x - c.x);
+    this.dropItem(type, rar, c.x + Math.cos(a) * 50, c.y + Math.sin(a) * 50 + 12);
   }
 
-  offerAugment(p, tier) {
-    const owned = [...p.augs, ...p.offers.flatMap((o) => o.ids)];
-    const ids = pickOffer(this.rng, tier, owned);
-    if (!ids.length) return;
-    const o = { id: this.nextOffer++, tier, ids, t: C.OFFER_TIME };
-    p.offers.push(o);
-    p.uiVer++;
-    this.emit({ e: 'offer', to: p.id, o: o.id, r: tier, ids });
-    if (tier === 2) this.emit({ e: 'prism', global: true, id: p.id });
+  dropItem(type, rarity, x, y) {
+    const it = { id: this.nextId++, x: Math.round(x), y: Math.round(y), type, rarity, t: this.time };
+    const tmp = { x: it.x, y: it.y, r: 14 };
+    resolveStatic(tmp, this.obstacles, this.R);
+    it.x = Math.round(tmp.x);
+    it.y = Math.round(tmp.y);
+    this.items.push(it);
+    return it;
   }
 
-  updateOffers(p, dt) {
-    if (!p.offers.length) return;
-    const o = p.offers[0];
-    o.t -= dt;
-    let pick = -1;
-    if (p.isBot) pick = o.t < C.OFFER_TIME - 1 ? Math.floor(this.rng() * o.ids.length) : -1;
-    else if (p.input.po === o.id && p.input.pk >= 1 && p.input.pk <= o.ids.length) pick = p.input.pk - 1;
-    if (pick < 0 && o.t <= 0) pick = Math.floor(this.rng() * o.ids.length);
-    if (pick < 0) return;
-    p.offers.shift();
-    this.applyAugment(p, o.ids[pick]);
-  }
-
-  applyAugment(p, id) {
-    const a = AUG_BY_ID[id];
-    if (!a || p.augs.includes(id)) return;
-    p.augs.push(id);
-    if (a.flag) p.aug[a.flag] = true;
-    if (a.grade) for (const k in a.grade) p.grade[k] = Math.max(p.grade[k], a.grade[k]);
-    if (id === 'gambler') {
-      p.luck += 0.5;
-      const pool = AUGMENTS.filter((x) => x.tier === 1 && !p.augs.includes(x.id));
-      if (pool.length) this.applyAugment(p, pool[Math.floor(this.rng() * pool.length)].id);
+  // 무기 줍기: 다른 무기면 바꿔 들고 원래 무기는 바닥에 / 같은 무기면 더 높은 등급만
+  takeItem(p, it) {
+    if (!canTake(p.gear.weapon, it)) return false;
+    this.items = this.items.filter((q) => q !== it);
+    const old = p.gear.weapon;
+    if (old.type !== it.type || old.rarity > 0) this.dropItem(old.type, old.rarity, p.x + 20, p.y + 16);
+    const swap = old.type !== it.type;
+    p.gear.weapon = makeWeapon(it.type, it.rarity);
+    if (swap) {
+      p.act = null;
+      p.combo = 0;
+      p.st.emp = null;
+      p.st.empT = 0;
+      for (const a of this.areas) if (a.kind === 'shadow' && a.owner === p.id) a.alive = false;
+      for (const k of ['q', 'w', 'e']) p.cd[k] = Math.min(p.cd[k], 2);
     }
     this.recomputeStats(p);
-    this.emit({ e: 'aug', id: p.id, a: id, x: Math.round(p.x), y: Math.round(p.y), r: a.tier });
+    this.emit({ e: 'equip', id: p.id, x: Math.round(p.x), y: Math.round(p.y), w: it.type, r: it.rarity, s: swap ? 1 : 0 });
+    if (it.rarity >= MYTHIC - 1) this.emit({ e: 'legend', global: true, id: p.id, w: it.type, r: it.rarity });
+    return true;
   }
 
-  // ---------------- 경험치 영혼 ----------------
+  // ---------------- 강화석 (일반 몹) → 무기 등급 ----------------
+  gainStones(p, n) {
+    if (!p.alive) return;
+    p.stones += n;
+    let up = false;
+    while (p.gear.weapon.rarity < MYTHIC - 1 && p.stones >= STONE_COST[p.gear.weapon.rarity]) {
+      p.stones -= STONE_COST[p.gear.weapon.rarity];
+      p.gear.weapon = makeWeapon(p.gear.weapon.type, p.gear.weapon.rarity + 1);
+      up = true;
+    }
+    if (up) {
+      this.recomputeStats(p);
+      this.heal(p, p.maxHp * 0.15);
+      this.emit({ e: 'upgrade', id: p.id, x: Math.round(p.x), y: Math.round(p.y), r: p.gear.weapon.rarity });
+      if (p.gear.weapon.rarity >= MYTHIC - 1) this.emit({ e: 'legend', global: true, id: p.id, w: p.gear.weapon.type, r: p.gear.weapon.rarity });
+    }
+    p.uiVer++;
+  }
+
+  // ---------------- 증강 (처치·에픽 보물) ----------------
+  offerAugment(p, kind, cards) {
+    if (!cards.length || p.offers.length >= 3) return;
+    const o = { id: this.nextOffer++, kind, cards, botT: 0.8 };
+    p.offers.push(o);
+    p.uiVer++;
+    this.emit({ e: 'offer', to: p.id, o: o.id, k: kind });
+    if (cards.some((c) => c.tier === 2)) this.emit({ e: 'prism', global: true, id: p.id });
+  }
+
+  // 처치 보상: 상대가 가진 증강 중에서 고름 (모자라면 새 증강으로 채움)
+  killOffer(killer, victim) {
+    const owned = new Map(killer.augs.map((g) => [g.id, g.tier]));
+    const cards = [];
+    for (const g of victim.augs) {
+      // 이미 가진 증강은 더 높은 등급일 때만 (등급 올리기)
+      if (owned.has(g.id) && owned.get(g.id) >= g.tier) continue;
+      cards.push({ id: g.id, tier: g.tier, stolen: 1 });
+    }
+    const used = [...killer.augs.map((g) => g.id), ...cards.map((c) => c.id)];
+    for (const id of randomAugs(this.rng, used, 3 - cards.length)) cards.push({ id, tier: rollAugTier(this.rng, 'kill') });
+    this.offerAugment(killer, 'kill', cards.slice(0, 3));
+  }
+
+  updateOffers(p) {
+    if (!p.offers.length) return;
+    const o = p.offers[0];
+    let pick = 0;
+    let rep = 0;
+    if (p.isBot) {
+      o.botT -= C.DT;
+      if (o.botT > 0) return;
+      [pick, rep] = this.botPick(p, o);
+    } else if (p.input.po === o.id) {
+      pick = p.input.pk;
+      rep = p.input.pr;
+    }
+    if (pick < 1 || pick > 4) return;
+    if (pick === 4 || pick > o.cards.length) {
+      // 건너뛰기: 강화석으로
+      p.offers.shift();
+      this.gainStones(p, C.SKIP_STONES);
+      this.emit({ e: 'augskip', id: p.id, x: Math.round(p.x), y: Math.round(p.y) });
+      return;
+    }
+    const card = o.cards[pick - 1];
+    const same = p.augs.findIndex((g) => g.id === card.id);
+    if (same < 0 && p.augs.length >= AUG_SLOTS && (rep < 1 || rep > AUG_SLOTS)) return; // 바꿀 칸을 아직 안 고름
+    p.offers.shift();
+    this.applyAugment(p, card, same >= 0 ? same + 1 : rep);
+  }
+
+  // 봇: 이미 모은 계열(무기 공명 포함)과 맞는 카드 → 가장 약한 칸과 교체
+  botPick(p, o) {
+    const wf = WEAPONS[p.gear.weapon.type].family;
+    const score = (c) => {
+      const a = AUG_BY_ID[c.id];
+      return c.tier * 2 + (p.fam[a.fam] || 0) * 1.5 + (a.fam === wf ? 1 : 0) + this.rng() * 0.8;
+    };
+    let best = 0;
+    for (let i = 1; i < o.cards.length; i++) if (score(o.cards[i]) > score(o.cards[best])) best = i;
+    if (p.augs.length < AUG_SLOTS || p.augs.some((g) => g.id === o.cards[best].id)) return [best + 1, 0];
+    let worst = 0;
+    let ws = Infinity;
+    p.augs.forEach((g, i) => {
+      const a = AUG_BY_ID[g.id];
+      const s = g.tier * 2 + (p.fam[a.fam] || 0) * 1.5;
+      if (s < ws) {
+        ws = s;
+        worst = i;
+      }
+    });
+    if (ws >= score(o.cards[best])) return [4, 0];
+    return [best + 1, worst + 1];
+  }
+
+  applyAugment(p, card, slot = 0) {
+    const a = AUG_BY_ID[card.id];
+    if (!a) return;
+    const same = p.augs.findIndex((g) => g.id === card.id);
+    let lost = null;
+    if (same >= 0) p.augs[same] = { id: card.id, tier: Math.max(card.tier, p.augs[same].tier) };
+    else if (p.augs.length < AUG_SLOTS) p.augs.push({ id: card.id, tier: card.tier });
+    else {
+      lost = p.augs[slot - 1];
+      p.augs[slot - 1] = { id: card.id, tier: card.tier };
+    }
+    const before = { ...p.fam };
+    this.recomputeStats(p);
+    this.emit({ e: 'aug', id: p.id, a: card.id, x: Math.round(p.x), y: Math.round(p.y), r: card.tier, l: lost ? lost.id : '' });
+    // 새로 켜진 세트 알림
+    for (const f in p.fam) {
+      for (const n of [2, 3]) if ((before[f] || 0) < n && p.fam[f] >= n) this.emit({ e: 'setup', id: p.id, to: p.id, f, n });
+    }
+  }
+
+  // ---------------- 강화석 구슬 (몬스터·탈락자가 떨어뜨림) ----------------
   dropSouls(x, y, total, maxN = 4) {
-    const n = Math.max(1, Math.min(maxN, Math.round(total / 12)));
+    if (total <= 0) return;
+    const n = Math.max(1, Math.min(maxN, total));
+    const base = Math.floor(total / n);
+    let left = total - base * n;
     for (let i = 0; i < n; i++) {
       const a = this.rng() * TAU;
       const sp = this.rng.range(90, 260);
-      this.souls.push({ id: this.nextId++, x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, v: total / n, t: 0, alive: true });
+      const v = base + (left-- > 0 ? 1 : 0);
+      if (v > 0) this.souls.push({ id: this.nextId++, x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, v, t: 0, alive: true });
     }
   }
 
@@ -713,8 +892,8 @@ export class Game {
       const d = Math.sqrt(bestD);
       if (d < C.XP_ORB_PICK) {
         o.alive = false;
-        this.gainXp(best, o.v);
-        this.emit({ e: 'soul', to: best.id, a: Math.round(o.v) });
+        this.gainStones(best, o.v);
+        this.emit({ e: 'soul', to: best.id, a: o.v });
       } else {
         const sp = 380 + (1 - d / C.XP_ORB_MAGNET) * 700;
         o.vx = ((best.x - o.x) / d) * sp;
@@ -723,28 +902,11 @@ export class Game {
     }
   }
 
-  gainXp(p, amt) {
-    if (!p.alive || p.level >= C.LEVEL_MAX) return;
-    p.xp += amt;
-    let leveled = false;
-    while (p.xp >= p.xpNext && p.level < C.LEVEL_MAX) {
-      p.xp -= p.xpNext;
-      p.level++;
-      p.xpNext = C.xpForLevel(p.level);
-      leveled = true;
-    }
-    if (p.level >= C.LEVEL_MAX) p.xp = 0;
-    if (leveled) {
-      this.recomputeStats(p);
-      this.heal(p, p.maxHp * 0.1);
-      this.emit({ e: 'lvl', id: p.id, x: Math.round(p.x), y: Math.round(p.y), l: p.level });
-    }
-  }
-
-  // 상자를 바닥에 새로 놓음 (몬스터 캠프 보상, 현상금 주머니)
+  // 상자를 바닥에 새로 놓음 (현상금 주머니, 에픽 보물)
   addChest(x, y, kind) {
-    const c = { id: this.nextId++, x: Math.round(x), y: Math.round(y), kind, open: false };
-    resolveStatic({ x: c.x, y: c.y, r: 20 }, this.obstacles, this.R);
+    const tmp = { x: Math.round(x), y: Math.round(y), r: 20 };
+    resolveStatic(tmp, this.obstacles, this.R);
+    const c = { id: this.nextId++, x: Math.round(tmp.x), y: Math.round(tmp.y), kind, open: false, camp: 0 };
     this.chests.push(c);
     this.emit({ e: 'chestdrop', id: c.id, x: c.x, y: c.y, k: kind });
     return c;
@@ -755,24 +917,19 @@ export class Game {
     if (!u.alive) return;
     u.alive = false;
     u.hp = 0;
+    this.burnBlast(u);
     if (!u.isPlayer) {
       const killer = src && src.isPlayer ? src : null;
-      this.emit({ e: 'mdeath', id: u.id, x: Math.round(u.x), y: Math.round(u.y), t: MONSTERS[u.type].idx, k: killer ? killer.id : 0 });
+      const def = MONSTERS[u.type];
+      this.emit({ e: 'mdeath', id: u.id, x: Math.round(u.x), y: Math.round(u.y), t: def.idx, k: killer ? killer.id : 0 });
       if (u.tele) {
         u.tele.alive = false;
         u.tele = null;
       }
+      if (u.lair) this.lairDown(u, killer);
       if (killer) {
         killer.monsterKills++;
-        this.dropSouls(u.x, u.y, u.xp * (1 + this.time / 300), 4);
-        if (u.camp) {
-          const c = this.camps.find((q) => q.id === u.camp);
-          if (c) {
-            c.lastKiller = killer.id;
-            c.lx = u.x;
-            c.ly = u.y;
-          }
-        }
+        if (def.stones) this.dropSouls(u.x, u.y, def.stones, 3);
       }
       return;
     }
@@ -793,11 +950,13 @@ export class Game {
     }
     u.killerId = killer ? killer.id : 0;
     u.specId = u.killerId;
-    // 현상금 주머니: 연속 처치가 쌓인 사람이 죽으면 좋은 상자가 터져 나옴
+    // 무기와 강화석 절반을 떨어뜨림
+    this.dropItem(u.gear.weapon.type, u.gear.weapon.rarity, u.x, u.y);
+    this.dropSouls(u.x, u.y, Math.floor(u.stones / 2), 4);
+    // 현상금 주머니: 연속 처치가 쌓인 사람이 죽으면 좋은 무기 상자가 터져 나옴
     const bounty = u.kills;
     if (bounty >= C.BOUNTY_MIN) {
-      this.addChest(u.x, u.y, 'bounty');
-      if (bounty >= 4) this.addChest(u.x + 50, u.y + 30, 'big');
+      this.addChest(u.x + 30, u.y - 20, 'bounty');
       this.emit({ e: 'bountydrop', global: true, id: u.id, k: killer ? killer.id : 0, n: bounty, x: Math.round(u.x), y: Math.round(u.y) });
     }
     let multi = 0;
@@ -806,18 +965,85 @@ export class Game {
       killer.multi = this.time - killer.lastKillT < 8 ? killer.multi + 1 : 1;
       killer.lastKillT = this.time;
       multi = killer.multi;
-      this.gainXp(killer, 80 + 12 * u.level);
-      if (killer.alive) this.heal(killer, killer.maxHp * C.KILL_HEAL);
-      this.onKillAug(killer, u);
+      if (killer.alive) {
+        this.heal(killer, killer.maxHp * (C.KILL_HEAL + (this.fam(killer, 'blood', 3) ? 0.5 : 0)));
+        this.killOffer(killer, u);
+        this.onKillAug(killer, u);
+      }
       if (killer.kills >= C.BOUNTY_MIN) this.emit({ e: 'bounty', global: true, id: killer.id, n: killer.kills });
       killer.uiVer++;
     }
-    this.dropSouls(u.x, u.y, 40 + 10 * u.level, 4);
+    // 어시스트: 최근에 같이 때린 사람은 강화석 + 회복
+    for (const [hid, t] of u.hitters) {
+      if (this.time - t > C.ASSIST_TIME || (killer && hid === killer.id)) continue;
+      const h = this.players.get(hid);
+      if (!h || !h.alive) continue;
+      h.assists++;
+      this.gainStones(h, C.ASSIST_STONES);
+      this.heal(h, h.maxHp * 0.15);
+      this.emit({ e: 'assist', id: h.id, to: h.id, v: u.id, x: Math.round(h.x), y: Math.round(h.y) });
+    }
     this.emit({ e: 'death', id: u.id, x: Math.round(u.x), y: Math.round(u.y), k: killer ? killer.id : 0, fx: killer ? killer.cos.killfx : '' });
     this.emit({ e: 'kill', global: true, k: killer ? killer.id : 0, v: u.id, z: ctx && ctx.kind === 'zone' ? 1 : 0, m: multi, left: this.aliveCount() });
     u.uiVer++;
     const alive = [...this.players.values()].filter((p) => p.alive);
     if (alive.length <= 1) this.end(alive[0] || killer || null, 'last');
+  }
+
+  // ---------------- 에픽 몬스터 둥지 ----------------
+  updateLairs(dt) {
+    for (const l of this.lairs) {
+      if (l.state === 'gone') continue;
+      const z = this.zone;
+      // 자기장 밖이 된 둥지는 사라짐
+      if (z.dps > 0 && dist2(l.x, l.y, z.x, z.y) > (z.r + 60) ** 2) {
+        const m = l.mob ? this.byId.get(l.mob) : null;
+        if (m && m.alive) {
+          m.alive = false;
+          this.rebuildUnits();
+        }
+        l.state = 'gone';
+        this.emit({ e: 'lairgone', global: true, id: l.id });
+        continue;
+      }
+      if (l.state === 'sleep' || l.state === 'dead') {
+        l.t -= dt;
+        if (l.t <= 0) {
+          const m = this.spawnMonster(l.boss, l.x, l.y, { lair: l.id });
+          m.leash = MONSTERS[l.boss].leash;
+          l.mob = m.id;
+          l.state = 'alive';
+          l.half = false;
+          this.emit({ e: 'lairwake', global: true, id: l.id, b: l.boss, k: l.kind });
+        }
+        continue;
+      }
+      const m = this.byId.get(l.mob);
+      if (!m || !m.alive) continue;
+      l.state = this.time - m.lastDmgT < 3 ? 'fight' : 'alive';
+      // 아무도 없으면 천천히 회복 (몰래 조금씩 깎아 두기 방지)
+      if (this.time - m.lastDmgT > 6) m.hp = Math.min(m.maxHp, m.hp + m.maxHp * 0.08 * dt);
+      if (!l.half && m.hp < m.maxHp * 0.3) {
+        l.half = true;
+        this.emit({ e: 'lairlow', global: true, id: l.id, b: l.boss, x: Math.round(m.x), y: Math.round(m.y) });
+      }
+      if (l.half && m.hp > m.maxHp * 0.6) l.half = false;
+    }
+  }
+
+  lairDown(m, killer) {
+    const l = this.lairs.find((q) => q.id === m.lair);
+    if (!l) return;
+    l.state = l.kind === 'titan' ? 'gone' : 'dead';
+    l.t = C.EPIC_RESPAWN;
+    l.mob = 0;
+    this.addChest(m.x, m.y, l.kind === 'titan' ? 'titan' : 'epic');
+    if (killer) {
+      killer.epicKills++;
+      this.heal(killer, killer.maxHp * 0.2);
+      this.gainStones(killer, 5);
+    }
+    this.emit({ e: 'epicdown', global: true, id: l.id, b: l.boss, k: killer ? killer.id : 0, x: Math.round(m.x), y: Math.round(m.y) });
   }
 
   // ---------------- 자기장 ----------------
@@ -898,11 +1124,10 @@ export class Game {
           return !m || !m.alive;
         })) {
           c.alive = false;
+          c.cleared = true;
           c.respawnT = CAMP_TYPES[c.type].respawn * 2;
           this.emit({ e: 'campclear', id: c.id, x: c.x, y: c.y });
-          // 캠프 보상: 정리한 사람이 있으면 상자 (엘리트는 큰 상자)
-          if (c.lastKiller) this.addChest(c.lx, c.ly, c.type === 'elite' || c.type === 'large' ? 'big' : 'small');
-          c.lastKiller = 0;
+          for (const ch of this.chests) if (ch.camp === c.id && !ch.open) this.emit({ e: 'unlock', id: ch.id, x: ch.x, y: ch.y });
         }
         continue;
       }
@@ -922,7 +1147,7 @@ export class Game {
 
   spawnMonster(type, x, y, extra = {}) {
     const def = MONSTERS[type];
-    const hpMult = 1 + this.time / 300;
+    const hpMult = def.epic ? 1 : 1 + this.time / 300;
     const m = {
       id: this.nextId++,
       isPlayer: false,
@@ -954,15 +1179,14 @@ export class Game {
       mx: 0,
       my: 0,
       moveSpeed: 0,
-      xp: def.xp,
       ringT: 2.5,
       leash: extra.camp ? 420 : def.leash || 900,
-      altar: null,
       camp: extra.camp || 0,
+      lair: extra.lair || 0,
       tele: null,
       invulnT: 0,
       lastDmgT: -99,
-      ccImmune: false,
+      ccImmune: !!def.boss,
     };
     resolveStatic(m, this.obstacles, this.R);
     this.monsters.push(m);
@@ -992,14 +1216,17 @@ export class Game {
       bot: p.isBot ? 1 : 0,
       placement: i + 1,
       kills: p.kills,
+      assists: p.assists,
       deaths: p.deaths,
       score: p.kills,
       monsterKills: p.monsterKills,
+      epicKills: p.epicKills,
       chests: p.chestsOpened,
-      augs: p.augs.slice(),
+      augs: p.augs.map((g) => g.id),
+      augTiers: p.augs.map((g) => g.tier),
       dmg: Math.round(p.dmgDealt),
-      level: p.level,
       weapon: p.gear.weapon.type,
+      rarity: p.gear.weapon.rarity,
     }));
     this.emit({ e: 'end', global: true, w: this.winner, r: reason });
   }
@@ -1036,6 +1263,16 @@ export class Game {
     return f;
   }
 
+  // 증강 계열을 숫자 하나로 (이름표 위 아이콘용): 칸마다 계열 번호+1, 7진법
+  augCode(p) {
+    let c = 0;
+    for (let i = p.augs.length - 1; i >= 0; i--) {
+      const a = AUG_BY_ID[p.augs[i].id];
+      c = c * 7 + (a ? ['fire', 'storm', 'shadow', 'steel', 'blood', 'wind'].indexOf(a.fam) + 1 : 0);
+    }
+    return c;
+  }
+
   // 수풀 안의 적: 가까이 가거나 같은 수풀에 있거나, 방금 공격했으면 보임
   hiddenInBush(p, viewer, cx, cy) {
     if (p.inBush < 0) return false;
@@ -1044,12 +1281,19 @@ export class Game {
     return dist2(p.x, p.y, cx, cy) > 170 * 170;
   }
 
+  lairSnap() {
+    return this.lairs.map((l) => {
+      const m = l.mob ? this.byId.get(l.mob) : null;
+      return [l.id, LAIR_STATE.indexOf(l.state), m && m.alive ? Math.round((100 * m.hp) / m.maxHp) : 0, Math.max(0, Math.ceil(l.t))];
+    });
+  }
+
   snapshotFor(pid, lastUiVer = -1) {
     const me = this.players.get(pid);
     const R = Math.round;
     if (this.state === 'landing' || this.state === 'waiting') {
-      const snap = { t: 'snap', tk: this.tick, tm: 0, st: this.state, lt: R(this.landT * 10) / 10, pl: [], mo: [], pr: [], ar: [], so: [], ch: this.chests.map((c) => [c.id, c.x, c.y, c.open ? 1 : 0, CHEST_KINDS.indexOf(c.kind)]), z: [0, 0, 0, R(this.R + 300), 0, 0, R(this.R + 300), 0, 0, -1], ev: this.events.filter((e) => e.global), ac: this.aliveCount() };
-      if (me) snap.me = { id: me.id, al: 1, ld: 0, lx: me.input.lx, ly: me.input.ly, x: 0, y: 0, ack: me.ack, hp: me.hp, mhp: me.maxHp, cd: [0, 0, 0, 0], cdm: [1, 1, 1, 1], ult: 0, st: 0, chn: -1 };
+      const snap = { t: 'snap', tk: this.tick, tm: 0, st: this.state, lt: R(this.landT * 10) / 10, pl: [], mo: [], pr: [], ar: [], so: [], it: [], ch: [], z: [0, 0, 0, R(this.R + 300), 0, 0, R(this.R + 300), 0, 0, -1], lr: this.lairSnap(), ev: this.events.filter((e) => e.global), ac: this.aliveCount() };
+      if (me) snap.me = { id: me.id, al: 1, ld: 0, lx: me.spawn ? me.spawn[0] : null, ly: me.spawn ? me.spawn[1] : null, x: 0, y: 0, ack: me.ack, hp: me.hp, mhp: me.maxHp, cd: [0, 0, 0, 0], cdm: [1, 1, 1, 1], ult: 0, st: 0, chn: -1 };
       return snap;
     }
     let cx = 0;
@@ -1091,7 +1335,7 @@ export class Game {
         actT = R(Math.min(1, a.t / a.dur) * 100);
       } else if (p.channel) {
         act = 7;
-        actT = R((p.channel.t / C.CHEST_OPEN) * 100);
+        actT = R((p.channel.t / p.channel.dur) * 100);
       }
       pl.push([
         p.id,
@@ -1101,20 +1345,20 @@ export class Game {
         Math.ceil(p.hp),
         p.maxHp,
         this.playerFlags(p),
-        p.level,
+        p.augs.length,
         act,
         actT,
         WI(p.gear.weapon.type),
         p.kills,
         R(p.r),
-        p.augs.length,
-        0,
+        this.augCode(p),
+        p.gear.weapon.rarity,
         R(p.st.shield),
       ]);
     }
     const mo = [];
     for (const m of this.monsters) {
-      if (!m.alive || !inView(m.x, m.y, 80)) continue;
+      if (!m.alive || !inView(m.x, m.y, 80 + m.r)) continue;
       const def = MONSTERS[m.type];
       const wind = m.state === MSTATE.windup ? R((1 - Math.max(0, m.stateT) / def.windup) * 100) : 0;
       mo.push([m.id, def.idx, R(m.x), R(m.y), Math.ceil(m.hp), R(m.maxHp), R(m.aim * 100) / 100, m.state, wind, m.st.stunT > 0 || m.st.rootT > 0 ? 1 : 0, m.st.slows.length ? 1 : 0]);
@@ -1122,7 +1366,7 @@ export class Game {
     const pr = [];
     for (const q of this.projs) {
       if (!q.alive || (q.owner !== pid && !inView(q.x, q.y, 150))) continue;
-      pr.push([q.id, PROJ_KINDS.indexOf(q.pkind), R(q.x), R(q.y), R(q.vx), R(q.vy), q.color ? WI(q.color) : -1, q.owner]);
+      pr.push([q.id, PROJ_KINDS.indexOf(q.pkind), R(q.x), R(q.y), R(q.vx), R(q.vy), q.color ? WI(q.color) : -1, q.owner, R(q.r)]);
     }
     const ar = [];
     for (const a of this.areas) {
@@ -1135,10 +1379,15 @@ export class Game {
       if (!o.alive || !inView(o.x, o.y, 40)) continue;
       so.push([o.id, R(o.x), R(o.y), R(o.v)]);
     }
+    const it = [];
+    for (const g of this.items) {
+      if (!inBox(g.x, g.y, 40)) continue;
+      it.push([g.id, g.x, g.y, WI(g.type), g.rarity]);
+    }
     const ch = [];
     for (const c of this.chests) {
       if (!inBox(c.x, c.y, 40)) continue;
-      ch.push([c.id, c.x, c.y, c.open ? 1 : 0, CHEST_KINDS.indexOf(c.kind)]);
+      ch.push([c.id, c.x, c.y, c.open ? 1 : 0, CHEST_KINDS.indexOf(c.kind), this.chestLocked(c) ? 1 : 0]);
     }
     const z = this.zone;
     const ev = [];
@@ -1158,10 +1407,16 @@ export class Game {
       pr,
       ar,
       so,
+      it,
       ch,
       ev,
       ac: this.aliveCount(),
     };
+    // 둥지 상태와 현상금 위치는 1초에 한 번 (지도 표시용)
+    if (this.tick % 15 === 0) {
+      snap.lr = this.lairSnap();
+      snap.bt = [...this.players.values()].filter((p) => p.alive && p.kills >= C.BOUNTY_MIN).map((p) => [p.id, R(p.x), R(p.y), p.kills]);
+    }
     if (me) {
       const m = {
         id: me.id,
@@ -1179,30 +1434,31 @@ export class Game {
         r: R(me.r * 10) / 10,
         hp: Math.ceil(me.hp),
         mhp: me.maxHp,
-        lv: me.level,
-        xp: Math.floor(me.xp),
-        xn: me.xpNext,
+        sn: me.stones,
         cd: [me.cd.q, me.cd.w, me.cd.e, me.cd.d].map((v) => Math.max(0, R(v * 100) / 100)),
         cdm: [me.cdMax.q, me.cdMax.w, me.cdMax.e, me.cdMax.d].map((v) => R(v * 100) / 100),
+        rl: me.rolls,
         ult: R(me.ult),
         k: me.kills,
+        as: me.assists,
         pl: me.placement,
         sp: spec ? spec.id : 0,
         ack: me.ack,
         st: me.st.stunT > 0 ? 2 : me.st.rootT > 0 ? 1 : 0,
-        chn: me.channel ? R((me.channel.t / C.CHEST_OPEN) * 100) : -1,
-        of: me.offers.length ? { id: me.offers[0].id, r: me.offers[0].tier, ids: me.offers[0].ids, t: R(me.offers[0].t * 10) / 10, n: me.offers.length } : null,
+        chn: me.channel ? R((me.channel.t / me.channel.dur) * 100) : -1,
+        of: me.offers.length ? { id: me.offers[0].id, k: me.offers[0].kind, c: me.offers[0].cards, n: me.offers.length } : null,
         dmg: R(me.dmgDealt),
         co: me.chestsOpened,
         mk: me.monsterKills,
         kb: me.killerId,
+        calm: this.outOfCombat(me) ? 1 : 0,
       };
       if (me.uiVer !== lastUiVer) {
         m.ui = {
           v: me.uiVer,
           gear: { weapon: me.gear.weapon },
-          grade: { ...me.grade },
-          augs: me.augs.slice(),
+          augs: me.augs.map((g) => ({ ...g })),
+          fam: { ...me.fam },
           speedMult: me.speedMult,
         };
       }

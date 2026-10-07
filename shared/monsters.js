@@ -2,11 +2,17 @@
 import { angleDiff, dist2 } from './math.js';
 
 export const MONSTERS = {
-  shade: { idx: 0, name: '망령', hp: 220, r: 15, speed: 160, dmg: 45, xp: 18, mass: 0.7, aggro: 420, atkRange: 36, windup: 0.28, atkCd: 1.0, kbRes: 0.8 },
-  archer: { idx: 1, name: '해골 궁수', hp: 180, r: 15, speed: 130, dmg: 55, xp: 22, mass: 0.8, aggro: 520, atkRange: 470, windup: 0.45, atkCd: 1.8, kbRes: 0.9, keep: 260, projSpeed: 620 },
-  brute: { idx: 2, name: '지옥 거한', hp: 900, r: 26, speed: 120, dmg: 110, xp: 63, mass: 3, aggro: 420, atkRange: 110, windup: 0.7, atkCd: 2.2, kbRes: 0.45, slamR: 105 },
-  elite: { idx: 3, name: '망령 기사', hp: 1300, r: 24, speed: 150, dmg: 100, xp: 144, mass: 4, aggro: 460, atkRange: 100, windup: 0.6, atkCd: 1.8, kbRes: 0.35, slamR: 95, leash: 500 },
-  guardian: { idx: 4, name: '오브 수호자', hp: 4500, r: 38, speed: 115, dmg: 110, xp: 450, mass: 14, aggro: 380, atkRange: 140, windup: 0.85, atkCd: 2.2, kbRes: 0.15, slamR: 140, ringEvery: 4.5, ringDmg: 60, leash: 300 },
+  shade: { idx: 0, name: '슬라임', hp: 220, r: 15, speed: 160, dmg: 45, stones: 2, mass: 0.7, aggro: 420, atkRange: 36, windup: 0.28, atkCd: 1.0, kbRes: 0.8 },
+  archer: { idx: 1, name: '해골 궁수', hp: 180, r: 15, speed: 130, dmg: 55, stones: 2, mass: 0.8, aggro: 520, atkRange: 470, windup: 0.45, atkCd: 1.8, kbRes: 0.9, keep: 260, projSpeed: 620 },
+  brute: { idx: 2, name: '외눈 거인', hp: 900, r: 26, speed: 120, dmg: 110, stones: 4, mass: 3, aggro: 420, atkRange: 110, windup: 0.7, atkCd: 2.2, kbRes: 0.45, slamR: 105 },
+  elite: { idx: 3, name: '야수', hp: 1300, r: 24, speed: 150, dmg: 100, stones: 8, mass: 4, aggro: 460, atkRange: 100, windup: 0.6, atkCd: 1.8, kbRes: 0.35, slamR: 95, leash: 500 },
+  guardian: { idx: 4, name: '수호자', hp: 4500, r: 38, speed: 115, dmg: 110, stones: 0, mass: 14, aggro: 380, atkRange: 140, windup: 0.85, atkCd: 2.2, kbRes: 0.15, slamR: 140, ringEvery: 4.5, ringDmg: 60, leash: 300, boss: true },
+  // 에픽 몬스터: 정해진 둥지에 살고, 근처의 모든 플레이어를 공격. 잡으면 보물상자가 떨어짐
+  frog: { idx: 5, name: '거대 두꺼비', hp: 3000, r: 36, speed: 105, dmg: 115, stones: 0, mass: 14, aggro: 360, atkRange: 130, windup: 0.8, atkCd: 2.0, kbRes: 0.1, slamR: 150, ringEvery: 5, ringDmg: 55, leash: 420, boss: true, epic: true },
+  spirit: { idx: 6, name: '푸른 혼령', hp: 2700, r: 34, speed: 120, dmg: 95, stones: 0, mass: 12, aggro: 380, atkRange: 120, windup: 0.75, atkCd: 2.0, kbRes: 0.1, slamR: 140, ringEvery: 3.6, ringDmg: 50, leash: 420, boss: true, epic: true },
+  cyclop: { idx: 7, name: '외눈 악마', hp: 3300, r: 36, speed: 100, dmg: 130, stones: 0, mass: 14, aggro: 360, atkRange: 140, windup: 0.85, atkCd: 2.2, kbRes: 0.1, slamR: 165, ringEvery: 6, ringDmg: 60, leash: 420, boss: true, epic: true },
+  slime: { idx: 8, name: '왕 슬라임', hp: 3000, r: 40, speed: 110, dmg: 110, stones: 0, mass: 14, aggro: 360, atkRange: 140, windup: 0.8, atkCd: 2.0, kbRes: 0.1, slamR: 175, ringEvery: 5, ringDmg: 55, leash: 420, boss: true, epic: true },
+  tengu: { idx: 9, name: '대텐구', hp: 8000, r: 50, speed: 115, dmg: 150, stones: 0, mass: 30, aggro: 420, atkRange: 170, windup: 0.9, atkCd: 2.0, kbRes: 0.05, slamR: 210, ringEvery: 3.2, ringDmg: 70, leash: 480, boss: true, epic: true, titan: true },
 };
 export const MONSTER_TYPES = Object.keys(MONSTERS);
 export const MONSTER_BY_IDX = MONSTER_TYPES.map((k) => MONSTERS[k]);
@@ -62,7 +68,7 @@ export function updateMonster(game, m, dt) {
       m.target = null;
       if (m.camp) m.resetting = true;
     }
-    if (!m.target && m.type === 'guardian') {
+    if (!m.target && def.boss) {
       let best = null;
       let bestD = def.aggro * def.aggro;
       for (const p of game.players.values()) {
@@ -81,7 +87,7 @@ export function updateMonster(game, m, dt) {
 
   // 공격 준비 중 → 시간이 되면 공격
   if (m.state === MSTATE.windup) {
-    if (tgt && m.type !== 'brute' && m.type !== 'elite' && m.type !== 'guardian') {
+    if (tgt && !def.slamR) {
       m.aim = Math.atan2(tgt.y - m.y, tgt.x - m.x) * 0.2 + m.aim * 0.8;
     }
     if (m.stateT <= 0) {
@@ -179,10 +185,10 @@ export function updateMonster(game, m, dt) {
 function startWindup(game, m, def, tgt) {
   m.state = MSTATE.windup;
   m.stateT = def.windup;
-  if (m.type === 'brute' || m.type === 'elite' || m.type === 'guardian') {
+  if (def.slamR) {
     // 바닥 경고 표시 (플레이어가 보고 피할 수 있게)
     const a = Math.atan2(tgt.y - m.y, tgt.x - m.x);
-    const off = m.type === 'guardian' ? 50 : 40;
+    const off = def.boss ? def.r * 0.8 : 40;
     m.tele = game.addArea({
       kind: 'slam',
       x: m.x + Math.cos(a) * off,
@@ -192,8 +198,8 @@ function startWindup(game, m, def, tgt) {
       dur: def.windup + 0.05,
       owner: m.id,
       team: -1,
-      dmg: def.dmg * game.monsterDmgMult(),
-      knock: 520,
+      dmg: def.dmg * (def.epic ? 1 : game.monsterDmgMult()),
+      knock: def.epic ? 380 : 520,
     });
     m.aim = a;
   }
@@ -228,7 +234,7 @@ function performMonsterAttack(game, m, def, tgt) {
       knock: 40,
     });
   }
-  // brute/guardian은 slam 장판이 피해를 줌
+  // 큰 몬스터는 slam 장판이 피해를 줌
   m.tele = null;
 }
 
@@ -243,7 +249,7 @@ function guardianRing(game, m, def) {
       angle: a,
       speed: 360,
       range: 560,
-      dmg: def.ringDmg * game.monsterDmgMult(),
+      dmg: def.ringDmg * (def.epic ? 1 : game.monsterDmgMult()),
       r: 10,
       pkind: 'orbshot',
       knock: 150,

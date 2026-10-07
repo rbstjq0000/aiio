@@ -1,75 +1,102 @@
-// 증강: 상자를 열면 같은 등급의 증강 3개 중 하나를 고름 (롤 아레나 방식)
-// 등급: 0 실버 / 1 골드 / 2 프리즘
-// 효과는 두 가지 방식으로 적용됨
-//   stats: 장착 즉시 능력치에 더해짐 (sim.recomputeStats)
-//   hook 이름(flag): 전투 코드(combat.js)가 p.aug[이름]으로 확인해서 발동
+// 증강: 최대 3칸. 6계열 × 4종, 같은 계열 2개·3개를 모으면 세트 효과 (TFT식)
+// 들고 있는 무기의 계열(무기 공명)은 세트 개수를 1 올려 줌 (그 계열 증강이 1개 이상 있을 때)
+// 얻는 곳: 적 처치(상대 증강 중 하나), 에픽 보물. 상자는 무기만 줌
+// 등급(실버·골드·프리즘)은 같은 증강의 수치 배율
 export const AUG_TIERS = [
-  { id: 'silver', name: '실버', color: '#c9d4e0' },
-  { id: 'gold', name: '골드', color: '#ffcf4a' },
-  { id: 'prism', name: '프리즘', color: '#ff7ef2' },
+  { id: 'silver', name: '실버', color: '#c9d4e0', mult: 1 },
+  { id: 'gold', name: '골드', color: '#ffcf4a', mult: 1.4 },
+  { id: 'prism', name: '프리즘', color: '#ff7ef2', mult: 1.8 },
 ];
+export const AUG_SLOTS = 3;
 
+export const FAMILIES = [
+  { id: 'fire', name: '화염', icon: '🔥', color: '#ff7a3d', set2: '화상 피해 +50%', set3: '불타는 적이 죽으면 폭발 (주변 160에 150)' },
+  { id: 'storm', name: '번개', icon: '⚡', color: '#ffe14d', set2: '번개가 1명 더 튐, 스킬 쿨 -8%', set3: '3초마다 가까운 적에게 번개 (120)' },
+  { id: 'shadow', name: '그림자', icon: '🌑', color: '#b28cff', set2: '등 뒤에서 때리면 치명타', set3: '처치하면 2초간 투명 + 이동 +30%' },
+  { id: 'steel', name: '강철', icon: '🛡', color: '#9fb4c8', set2: '받는 피해 -10%', set3: '10초마다 최대 체력 15% 보호막' },
+  { id: 'blood', name: '피', icon: '🩸', color: '#ff4d6b', set2: '체력이 낮을수록 공격 속도 증가 (최대 +40%)', set3: '처치하면 체력 50% 회복' },
+  { id: 'wind', name: '바람', icon: '🍃', color: '#7ed957', set2: '구르기 2번 연속 사용 가능', set3: '구르고 나면 1.5초간 이동 +40%' },
+];
+export const FAMILY_BY_ID = Object.fromEntries(FAMILIES.map((f) => [f.id, f]));
+export const FAMILY_IDS = FAMILIES.map((f) => f.id);
+
+// v: 기본 수치 (등급 배율이 곱해짐). short: 카드에 쓰는 한 줄 요약
 export const AUGMENTS = [
-  // ---------------- 실버: 무난한 능력치 ----------------
-  { id: 'tough', tier: 0, icon: '❤', name: '단련', desc: '최대 체력 +15%', stats: { hp: 0.15 } },
-  { id: 'swift', tier: 0, icon: '👟', name: '날렵함', desc: '이동 속도 +8%', stats: { speed: 0.08 } },
-  { id: 'sharp', tier: 0, icon: '🗡', name: '예리함', desc: '기본 공격 피해 +18%', stats: { basicDmg: 0.18 } },
-  { id: 'focus', tier: 0, icon: '⏳', name: '집중', desc: '스킬 쿨타임 -12%', stats: { cdr: 0.12 } },
-  { id: 'leech', tier: 0, icon: '🩸', name: '흡혈', desc: '준 피해의 8%만큼 회복', stats: { lifesteal: 0.08 } },
-  { id: 'roller', tier: 0, icon: '🌀', name: '구르기 장인', desc: '구르기(D) 쿨타임 -40%', stats: { rollCdr: 0.4 } },
-  { id: 'lucky', tier: 0, icon: '🎯', name: '급소 노리기', desc: '치명타 확률 +20% (1.75배 피해)', stats: { crit: 0.2 } },
-  { id: 'regen', tier: 0, icon: '🌿', name: '재생', desc: '항상 초당 최대 체력 1.5% 회복', stats: { regen: 0.015 } },
-  { id: 'hasty', tier: 0, icon: '⚡', name: '속사', desc: '기본 공격 속도 +20%', stats: { atkSpeed: 0.2 } },
-  { id: 'ultcharge', tier: 0, icon: '★', name: '궁극 충전', desc: '궁극기 게이지가 1.6배 빨리 참', stats: { ultGain: 0.6 } },
-
-  // ---------------- 골드: 플레이가 바뀌는 효과 ----------------
-  { id: 'executioner', tier: 1, icon: '⚔', name: '처형자', desc: '체력 35% 이하인 적에게 주는 피해 +30%', flag: 'executioner' },
-  { id: 'chain', tier: 1, icon: '⚡', name: '연쇄 번개', desc: '기본 공격 3번째마다 번개가 근처 적 3명에게 튐 (각 90)', flag: 'chain' },
-  { id: 'firetrail', tier: 1, icon: '🔥', name: '불꽃 발자국', desc: '구르면 지나간 자리에 2초간 불길 (0.5초마다 35)', flag: 'firetrail' },
-  { id: 'thorns', tier: 1, icon: '🌵', name: '가시 갑옷', desc: '기본 공격으로 받은 피해의 35%를 되돌려줌', flag: 'thorns' },
-  { id: 'secondwind', tier: 1, icon: '🛡', name: '두 번째 바람', desc: '체력이 30% 아래로 떨어지면 최대 체력 30% 보호막 (40초마다)', flag: 'secondwind' },
-  { id: 'shurikens', tier: 1, icon: '✴', name: '마법 수리검', desc: '스킬로 적을 맞히면 그 적에게 유도 수리검 2개 (각 45)', flag: 'shurikens' },
-  { id: 'giant', tier: 1, icon: '🗿', name: '거인화', desc: '몸 크기 +25%, 최대 체력 +30%, 이동 -5%', stats: { hp: 0.3, speed: -0.05, size: 0.25 } },
-  { id: 'qawaken', tier: 1, icon: 'Q', name: 'Q 각성', desc: 'Q 스킬이 영웅 강화 형태로 바뀜', grade: { q: 3 } },
-  { id: 'wawaken', tier: 1, icon: 'W', name: 'W 각성', desc: 'W 스킬이 영웅 강화 형태로 바뀜', grade: { w: 3 } },
-  { id: 'eawaken', tier: 1, icon: 'E', name: 'E 각성', desc: 'E 스킬이 영웅 강화 형태로 바뀜', grade: { e: 3 } },
-  { id: 'hunter', tier: 1, icon: '🏹', name: '사냥꾼', desc: '처치할 때마다 영구적으로 피해 +4% (최대 10번)', flag: 'hunter' },
-
-  // ---------------- 프리즘: 판을 뒤집는 효과 ----------------
-  { id: 'doublecast', tier: 2, icon: '✌', name: '이중 시전', desc: 'Q가 0.35초 뒤 한 번 더 시전됨', flag: 'doublecast' },
-  { id: 'undying', tier: 2, icon: '👼', name: '불사', desc: '죽을 피해를 받으면 대신 2초 무적 + 체력 30% (판당 1번)', flag: 'undying' },
-  { id: 'berserk', tier: 2, icon: '😡', name: '광전사', desc: '기본 공격 속도 +45%, 이동 +10%, 흡혈 10%', stats: { atkSpeed: 0.45, speed: 0.1, lifesteal: 0.1 } },
-  { id: 'reset', tier: 2, icon: '♻', name: '처형인의 칼날', desc: '적 플레이어를 처치하면 모든 스킬 쿨타임 초기화 + 궁극기 50%', flag: 'reset' },
-  { id: 'meteor', tier: 2, icon: '☄', name: '운석 낙하', desc: '5초마다 가장 가까운 적 발밑에 운석 (180)', flag: 'meteor' },
-  { id: 'vampire', tier: 2, icon: '🧛', name: '흡혈귀', desc: '흡혈 20%, 넘치는 회복은 보호막으로 (최대 300)', stats: { lifesteal: 0.2 }, flag: 'overheal' },
-  { id: 'qmaster', tier: 2, icon: 'Q', name: 'Q 초월', desc: 'Q 스킬이 전설 강화 형태로 바뀌고 쿨타임 -25%', grade: { q: 4 }, stats: { qcdr: 0.25 } },
-  { id: 'rmaster', tier: 2, icon: 'R', name: '궁극 초월', desc: '궁극기 게이지 2배, 궁극기 피해 +30%', stats: { ultGain: 1, ultDmg: 0.3 } },
-  { id: 'gambler', tier: 2, icon: '🎰', name: '도박사', desc: '앞으로 여는 상자의 등급이 한 단계 높게 나올 확률 +50%, 지금 바로 무작위 골드 증강 1개 추가', flag: 'gambler' },
+  // 🔥 화염
+  { id: 'firetrail', fam: 'fire', icon: '👣', name: '불꽃 발자국', v: 35, short: '구르면 불길', desc: (v) => `구른 자리에 2초간 불길 (0.5초마다 ${v})` },
+  { id: 'meteor', fam: 'fire', icon: '☄', name: '운석 낙하', v: 160, short: '6초마다 운석', desc: (v) => `6초마다 가장 가까운 적 발밑에 운석 (${v})` },
+  { id: 'ignite', fam: 'fire', icon: '🕯', name: '불씨 손길', v: 40, short: '평타가 화상', desc: (v) => `기본 공격이 2초간 ${v} 화상을 입힘` },
+  { id: 'scorch', fam: 'fire', icon: '🔥', name: '화상 강화', v: 0.4, short: '화상 피해 증가', desc: (v) => `내가 입히는 화상 피해 +${Math.round(v * 100)}%` },
+  // ⚡ 번개
+  { id: 'chain', fam: 'storm', icon: '⚡', name: '연쇄 번개', v: 85, short: '평타 3번째 번개', desc: (v) => `기본 공격 3번째마다 번개가 근처 적 3명에게 튐 (각 ${v})` },
+  { id: 'hasty', fam: 'storm', icon: '⏩', name: '속사', v: 0.2, short: '공격 속도 증가', desc: (v) => `기본 공격 속도 +${Math.round(v * 100)}%` },
+  { id: 'thunder', fam: 'storm', icon: '🌩', name: '뇌격', v: 70, short: '스킬 적중 시 번개', desc: (v) => `스킬로 적을 맞히면 번개가 떨어짐 (${v}, 대상마다 1초)` },
+  { id: 'overload', fam: 'storm', icon: '🔋', name: '과부하', v: 0.12, short: '스킬 쿨 감소', desc: (v) => `스킬 쿨타임 -${Math.round(v * 100)}%` },
+  // 🌑 그림자
+  { id: 'executioner', fam: 'shadow', icon: '⚔', name: '처형자', v: 0.25, short: '약한 적에게 강함', desc: (v) => `체력 35% 이하인 적에게 주는 피해 +${Math.round(v * 100)}%` },
+  { id: 'shurikens', fam: 'shadow', icon: '✴', name: '마법 수리검', v: 45, short: '스킬 적중 시 수리검', desc: (v) => `스킬로 적을 맞히면 유도 수리검 2개 (각 ${v})` },
+  { id: 'shadowstep', fam: 'shadow', icon: '👻', name: '그림자 걸음', v: 1.2, short: '구르면 투명', desc: (v) => `구르면 ${Math.round(v * 10) / 10}초간 투명 (공격하면 풀림)` },
+  { id: 'vital', fam: 'shadow', icon: '🎯', name: '급소 노리기', v: 0.18, short: '치명타 확률', desc: (v) => `치명타 확률 +${Math.round(v * 100)}% (1.75배 피해)` },
+  // 🛡 강철
+  { id: 'tough', fam: 'steel', icon: '❤', name: '단련', v: 0.16, short: '최대 체력 증가', desc: (v) => `최대 체력 +${Math.round(v * 100)}%` },
+  { id: 'thorns', fam: 'steel', icon: '🌵', name: '가시 갑옷', v: 0.3, short: '평타 피해 반사', desc: (v) => `기본 공격으로 받은 피해의 ${Math.round(v * 100)}%를 되돌려줌` },
+  { id: 'secondwind', fam: 'steel', icon: '💨', name: '두 번째 바람', v: 0.28, short: '위기 때 보호막', desc: (v) => `체력이 30% 아래로 떨어지면 최대 체력 ${Math.round(v * 100)}% 보호막 (40초마다)` },
+  { id: 'giant', fam: 'steel', icon: '🗿', name: '거인화', v: 0.25, short: '커지고 단단해짐', desc: (v) => `몸 크기 +25%, 최대 체력 +${Math.round(v * 100)}%, 이동 -5%` },
+  // 🩸 피
+  { id: 'leech', fam: 'blood', icon: '🩸', name: '흡혈', v: 0.09, short: '피해만큼 회복', desc: (v) => `준 피해의 ${Math.round(v * 100)}%만큼 회복` },
+  { id: 'berserk', fam: 'blood', icon: '😡', name: '광전사', v: 0.25, short: '공속 + 이속', desc: (v) => `기본 공격 속도 +${Math.round(v * 100)}%, 이동 +6%` },
+  { id: 'vampire', fam: 'blood', icon: '🧛', name: '흡혈귀', v: 0.07, short: '흡혈 + 보호막', desc: (v) => `흡혈 ${Math.round(v * 100)}%, 넘치는 회복은 보호막으로 (최대 300)` },
+  { id: 'hunter', fam: 'blood', icon: '🏹', name: '사냥꾼', v: 0.04, short: '처치마다 강해짐', desc: (v) => `플레이어를 처치할 때마다 피해 +${Math.round(v * 1000) / 10}% (최대 8번)` },
+  // 🍃 바람
+  { id: 'swift', fam: 'wind', icon: '👟', name: '날렵함', v: 0.09, short: '이동 속도', desc: (v) => `이동 속도 +${Math.round(v * 100)}%` },
+  { id: 'roller', fam: 'wind', icon: '🌀', name: '구르기 장인', v: 0.35, short: '구르기 쿨 감소', desc: (v) => `구르기 쿨타임 -${Math.round(v * 100)}%` },
+  { id: 'gust', fam: 'wind', icon: '🌬', name: '질풍', v: 0.3, short: '스킬 후 빨라짐', desc: (v) => `스킬을 쓰면 1초간 이동 +${Math.round(v * 100)}%` },
+  { id: 'phantom', fam: 'wind', icon: '✨', name: '잔상', v: 0.2, short: '구르기 무적 증가', desc: (v) => `구르기 무적 시간 +${Math.round(v * 100) / 100}초` },
 ];
-
 export const AUG_BY_ID = Object.fromEntries(AUGMENTS.map((a) => [a.id, a]));
 
-// 상자 등급 확률: [실버, 골드, 프리즘]
-export const CHEST_ODDS = {
-  small: [0.68, 0.27, 0.05],
-  big: [0.3, 0.5, 0.2],
-  bounty: [0.1, 0.5, 0.4],
-};
-
-export function rollTier(rng, kind, luck = 0) {
-  const o = CHEST_ODDS[kind] || CHEST_ODDS.small;
-  let r = rng();
-  let tier = r < o[0] ? 0 : r < o[0] + o[1] ? 1 : 2;
-  // 도박사: 한 단계 올라갈 확률
-  if (tier < 2 && luck > 0 && rng() < luck) tier++;
-  return tier;
+// 증강 하나의 실제 수치
+export function augValue(id, tier) {
+  const a = AUG_BY_ID[id];
+  return a ? a.v * AUG_TIERS[tier].mult : 0;
 }
 
-// 아직 없는 증강 중 같은 등급에서 3개
-export function pickOffer(rng, tier, owned, n = 3) {
-  let pool = AUGMENTS.filter((a) => a.tier === tier && !owned.includes(a.id));
-  if (pool.length < n) pool = AUGMENTS.filter((a) => !owned.includes(a.id));
+export function augDesc(id, tier) {
+  const a = AUG_BY_ID[id];
+  if (!a) return '';
+  const v = augValue(id, tier);
+  // 피해 같은 큰 수는 정수로, 비율은 그대로 (설명 함수가 %로 바꿈)
+  return a.desc(v >= 2 ? Math.round(v) : Math.round(v * 1000) / 1000);
+}
+
+// 계열별 개수 (무기 공명 포함)와 켜진 세트
+export function familyCounts(augs, weaponFamily) {
+  const n = {};
+  for (const g of augs) {
+    const a = AUG_BY_ID[g.id];
+    if (a) n[a.fam] = (n[a.fam] || 0) + 1;
+  }
+  if (weaponFamily && n[weaponFamily]) n[weaponFamily] += 1;
+  return n;
+}
+
+// 아직 없는 증강 중 n개 (같은 계열이 몰리지 않게 섞음)
+export function randomAugs(rng, owned, n = 3) {
+  const pool = AUGMENTS.filter((a) => !owned.includes(a.id));
   const out = [];
   while (out.length < n && pool.length) out.push(pool.splice(Math.floor(rng() * pool.length), 1)[0].id);
   return out;
+}
+
+// 증강 등급: 실버/골드/프리즘 확률
+export const OFFER_ODDS = {
+  kill: [0.7, 0.27, 0.03],
+  epic: [0, 0.75, 0.25],
+  titan: [0, 0.2, 0.8],
+};
+
+export function rollAugTier(rng, kind) {
+  const o = OFFER_ODDS[kind] || OFFER_ODDS.kill;
+  const r = rng();
+  return r < o[0] ? 0 : r < o[0] + o[1] ? 1 : 2;
 }
