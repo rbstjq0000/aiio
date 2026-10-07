@@ -33,6 +33,7 @@ export const PF = {
   EMPOWER: 4096,
   BURN: 8192,
   MARK: 16384,
+  CHARM: 32768,
   BLEED: 32768,
 };
 export const CHEST_KINDS = ['small', 'big', 'bounty', 'epic', 'titan'];
@@ -493,23 +494,48 @@ export class Game {
     if (pressed(PRESS.d)) this.tryRoll(p);
     if (pressed(PRESS.act)) this.interact(p, inp.ti);
     if (p.wantAct) this.tryWantAct(p, dt);
+    // 기본 공격이 이미 맞았으면(후딜) 스킬로 끊고 바로 시전 (롤의 평캔). 준비 중이면 맞는 순간 이어서 시전
+    const cancelBasic = () => {
+      if (p.act && p.act.key === 'basic' && p.act.done) p.act = null;
+    };
     for (const key of ['q', 'w', 'e', 'r']) {
-      if (pressed(PRESS[key]) && !this.trySkill(p, key)) p.buffer = { k: key, t: 0.3 };
+      if (!pressed(PRESS[key])) continue;
+      cancelBasic();
+      if (!this.trySkill(p, key)) p.buffer = { k: key, t: 0.7 };
+    }
+    // 눌러 둔 스킬이 먼저 (자동 공격에 밀려 사라지지 않게)
+    if (p.buffer && p.buffer.k !== 'atk') {
+      cancelBasic();
+      if (this.canAct(p) && this.trySkill(p, p.buffer.k)) p.buffer = null;
     }
     const newAtk = pressed(PRESS.atk);
-    if ((newAtk || inp.atk) && !this.tryBasic(p) && newAtk) p.buffer = { k: 'atk', t: 0.25 };
-    if (p.buffer && this.canAct(p)) {
-      const k = p.buffer.k;
-      const ok = k === 'atk' ? this.tryBasic(p) : this.trySkill(p, k);
-      if (ok) p.buffer = null;
-    }
+    const skillWaiting = p.buffer && p.buffer.k !== 'atk';
+    if (!skillWaiting && (newAtk || inp.atk) && !this.tryBasic(p) && newAtk) p.buffer = { k: 'atk', t: 0.25 };
+    if (p.buffer && p.buffer.k === 'atk' && this.canAct(p) && this.tryBasic(p)) p.buffer = null;
 
     if (p.act) this.updateAction(p, dt);
     this.updateChannel(p, dt);
 
     p.freeSpeed = this.playerSpeed(p, false);
     const speed = this.playerSpeed(p, true);
-    const hitWall = stepBody(p, inp.mx, inp.my, speed, dt, this.obstacles, this.R);
+    // 매혹: 입력과 상관없이 건 사람 쪽으로 천천히 걸어감
+    let mvx = inp.mx;
+    let mvy = inp.my;
+    let mvs = speed;
+    if (p.st.charmT > 0) {
+      const src = this.byId.get(p.st.charmSrc);
+      mvx = 0;
+      mvy = 0;
+      if (src && src.alive) {
+        const d = Math.hypot(src.x - p.x, src.y - p.y) || 1;
+        if (d > p.r + src.r + 10) {
+          mvx = (src.x - p.x) / d;
+          mvy = (src.y - p.y) / d;
+        }
+      }
+      mvs = p.freeSpeed * 0.55;
+    }
+    const hitWall = stepBody(p, mvx, mvy, mvs, dt, this.obstacles, this.R);
     if (hitWall && p.st.slamT > 0) this.wallSlam(p);
     if (!p.alive) return;
 
@@ -1294,6 +1320,7 @@ export class Game {
     if (p.invulnT > 0) f |= PF.PROTECT;
     if (p.st.rootT > 0) f |= PF.ROOT;
     if (p.st.stunT > 0) f |= PF.STUN;
+    if (p.st.charmT > 0) f |= PF.CHARM;
     if (p.st.invisT > 0) f |= PF.INVIS;
     if (p.inBush >= 0) f |= PF.BUSH;
     if (p.st.shield > 0) f |= PF.SHIELD;
@@ -1484,13 +1511,15 @@ export class Game {
         cd: [me.cd.q, me.cd.w, me.cd.e, me.cd.d].map((v) => Math.max(0, R(v * 100) / 100)),
         cdm: [me.cdMax.q, me.cdMax.w, me.cdMax.e, me.cdMax.d].map((v) => R(v * 100) / 100),
         rl: me.rolls,
+        // 다시 누르기 상태: [3단 베기 몇 번째, R 다시 누르기(검기 1 / 남은 질주 수), 칼날 기운]
+        rc: [me.st.steps ? me.st.steps.n : 0, me.st.bladeT > 0 && !me.st.bladeWave ? 1 : me.st.rushN || 0, me.st.runes || 0],
         ult: R(me.ult),
         k: me.kills,
         as: me.assists,
         pl: me.placement,
         sp: spec ? spec.id : 0,
         ack: me.ack,
-        st: me.st.stunT > 0 ? 2 : me.st.rootT > 0 ? 1 : 0,
+        st: me.st.stunT > 0 || me.st.charmT > 0 ? 2 : me.st.rootT > 0 ? 1 : 0,
         chn: me.channel ? R((me.channel.t / me.channel.dur) * 100) : -1,
         wo: me.wOffer ? [me.wOffer.id, WEAPON_IDS.indexOf(me.wOffer.type), me.wOffer.rarity] : null,
         of: me.offers.length ? { id: me.offers[0].id, k: me.offers[0].kind, c: me.offers[0].cards, n: me.offers.length } : null,

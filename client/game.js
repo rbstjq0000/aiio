@@ -1013,6 +1013,27 @@ export class GameClient {
       case 'passive':
         R.burst(e.x, e.y, '#c56bff', 10, 220, 4, 0.4);
         break;
+      case 'combo': {
+        // 콤보 성공: 큰 글씨 + 번쩍 + 내가 넣었으면 화면 흔들림
+        const mine = e.by === this.meId;
+        R.text(e.x, e.y - 70, e.t, mine ? '#ffe36b' : '#ffffff', mine ? 22 : 16, 1.2);
+        R.anim('spark', e.x, e.y - 20, { dur: 0.5, scale: 2.2, add: true });
+        R.burst(e.x, e.y - 10, '#ffe36b', 22, 340, 5, 0.6);
+        if (mine || e.id === this.meId) R.shake(mine ? 7 : 5);
+        break;
+      }
+      case 'silver':
+        // 은빛 표창 3연속: 은빛 고리
+        R.anim('circlew', e.x, e.y - 10, { dur: 0.35, scale: 1.4, add: true });
+        R.burst(e.x, e.y - 10, '#e8f4ff', 12, 260, 4, 0.45);
+        break;
+      case 'charm':
+        R.text(e.x, e.y - 60, '♥ 매혹', '#ff7ec8', 16, 0.9);
+        R.burst(e.x, e.y - 10, '#ff7ec8', 12, 200, 4, 0.5);
+        break;
+      case 'steps':
+        R.anim(e.n >= 3 ? 'circular' : 'arc', e.x, e.y - 10, { dur: 0.3, scale: e.n >= 3 ? 1.6 : 1.1, add: true });
+        break;
       case 'empower':
         R.anim('aura', e.x, e.y - 10, { dur: 0.4 });
         break;

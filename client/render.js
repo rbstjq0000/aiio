@@ -681,7 +681,7 @@ export class Renderer {
     const ctx = this.ctx;
     const t = v.time;
     for (const a of v.areas) {
-      const big = a.kind === 'line' ? a.len : a.r;
+      const big = a.kind === 'line' || a.kind === 'barrier' ? a.len : a.r;
       if (!this.visible(a.x, a.y, big)) continue;
       const enemy = a.enemy;
       const col = enemy ? ENEMY_TELE : a.color || '#ffffff';
@@ -692,6 +692,34 @@ export class Renderer {
         continue;
       }
       ctx.save();
+      if (a.kind === 'barrier') {
+        // 화염 장막: 일렁이는 불꽃 벽
+        const fade = Math.min(1, (a.dur - a.t) / 0.4, a.t / Math.max(0.05, a.delay));
+        ctx.globalAlpha = Math.max(0, fade);
+        ctx.translate(a.x, a.y);
+        ctx.rotate(a.ang);
+        const g = ctx.createLinearGradient(0, -a.width / 2, 0, a.width / 2);
+        g.addColorStop(0, 'rgba(255,90,30,0.15)');
+        g.addColorStop(0.5, 'rgba(255,170,60,0.75)');
+        g.addColorStop(1, 'rgba(255,90,30,0.15)');
+        ctx.fillStyle = g;
+        ctx.fillRect(-a.len / 2, -a.width / 2, a.len, a.width);
+        ctx.strokeStyle = 'rgba(255,230,140,0.9)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        for (let x = -a.len / 2; x <= a.len / 2; x += 12) {
+          const y = Math.sin(x * 0.08 + t * 14) * 5;
+          if (x === -a.len / 2) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+        ctx.restore();
+        if (Math.random() < 0.8) {
+          const k = (Math.random() - 0.5) * a.len;
+          this.burst(a.x + Math.cos(a.ang) * k, a.y + Math.sin(a.ang) * k, Math.random() < 0.5 ? '#ff7a2e' : '#ffd45a', 1, 40, 5, 0.6, { grav: -140, drag: 1 });
+        }
+        continue;
+      }
       if (a.kind === 'line') {
         ctx.translate(a.x, a.y);
         ctx.rotate(a.ang);

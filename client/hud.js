@@ -176,10 +176,33 @@ export class Hud {
     const rl = me.rl ?? 1;
     d.style.setProperty('--cd', (rl <= 0 && me.cdm[3] > 0 ? me.cd[3] / me.cdm[3] : 0).toFixed(3));
     d.querySelector('.slot-cdtext').textContent = rl <= 0 ? Math.ceil(me.cd[3]) : rl > 1 ? `×${rl}` : '';
+    const rc = me.rc || [0, 0, 0];
     const ultEl = this.slotEls.r;
-    ultEl.style.setProperty('--cd', ((100 - me.ult) / 100).toFixed(3));
-    ultEl.classList.toggle('ready', me.ult >= 100);
-    ultEl.querySelector('.slot-cdtext').textContent = me.ult < 100 ? `${Math.floor(me.ult)}%` : '';
+    if (rc[1] > 0) {
+      // 다시 누르기 가능 (검기 / 남은 질주)
+      ultEl.style.setProperty('--cd', '0');
+      ultEl.classList.add('ready');
+      ultEl.querySelector('.slot-cdtext').textContent = game.ui && game.ui.gear.weapon.type === 'scroll' ? `×${rc[1]}` : '다시!';
+    } else {
+      ultEl.style.setProperty('--cd', ((100 - me.ult) / 100).toFixed(3));
+      ultEl.classList.toggle('ready', me.ult >= 100);
+      ultEl.querySelector('.slot-cdtext').textContent = me.ult < 100 ? `${Math.floor(me.ult)}%` : '';
+    }
+    // 누를 필요 없는 스킬(표창 W)은 '자동'
+    if (game.ui) {
+      const wd = WEAPONS[game.ui.gear.weapon.type];
+      for (const k of ['q', 'w', 'e']) if (wd[k].type === 'passive') this.slotEls[k].querySelector('.slot-cdtext').textContent = '자동';
+    }
+    // 3단 베기: 다음이 몇 번째인지
+    const qEl = this.slotEls.q;
+    qEl.classList.toggle('ready', rc[0] > 0);
+    if (rc[0] > 0 && !(me.cd[0] > 0)) qEl.querySelector('.slot-cdtext').textContent = `${rc[0] + 1}/3`;
+    // 칼날 기운: 기본 공격 칸에 개수
+    const bEl = this.slotEls.basic;
+    if (bEl) {
+      bEl.classList.toggle('ready', rc[2] > 0);
+      bEl.querySelector('.slot-cdtext').textContent = rc[2] > 0 ? `×${rc[2]}` : '';
+    }
     this.updateOffer(game, me);
     this.updateWeaponBox(game, me);
 

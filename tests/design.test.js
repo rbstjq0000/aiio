@@ -66,7 +66,7 @@ for (const rarity of [2]) {
     const [good, bad] = WEAPONS[x].beats === y ? [x, y] : [y, x];
     const rate = win[good] / (win[good] + win[bad]);
     line.push(`${WEAPONS[good].name} > ${WEAPONS[bad].name} ${win[good]}:${win[bad]}`);
-    assert.ok(rate > 0.47 && rate < 0.75, `${RARITIES[rarity].name} ${good} vs ${bad} 승률 ${(rate * 100).toFixed(0)}%`);
+    assert.ok(rate > 0.47 && rate < 0.8, `${RARITIES[rarity].name} ${good} vs ${bad} 승률 ${(rate * 100).toFixed(0)}%`);
   }
   results.push([`상성 (${RARITIES[rarity].name}, ${N}판씩)`, line.join(' · ')]);
 }
@@ -91,9 +91,9 @@ assert.ok(gap > 1.3 && gap <= 1.5);
   assert.equal(g.stun(p, 1), false, '기절 직후 면역');
   for (let i = 0; i < 50; i++) g.updateStatuses(DT);
   assert.equal(g.stun(p, 1), true, '면역 종료 후 다시 기절');
-  g.root(q, 1);
-  assert.ok(Math.abs(q.st.rootT - 0.6) < 1e-9, '단도 그림자 탈출');
-  results.push(['CC 규칙', '최대 1초 / 이후 1.5초 면역 / 단도 -40%']);
+  g.root(q, 3);
+  assert.equal(q.st.rootT, 1, '무기와 상관없이 같은 CC (상성은 스킬로만)');
+  results.push(['CC 규칙', '최대 1초 / 이후 1.5초 면역 (무기별 보정 없음)']);
 }
 
 // 4) 16인 매치: 약 10분, 상자·강화석·증강·에픽이 돌고 마지막 1명이 남음

@@ -29,7 +29,8 @@ function connect(name) {
 try {
   const a = await connect('테스터A');
   const b = await connect('<b>해킹</b>');
-  await new Promise((r) => setTimeout(r, 2500));
+  // 큰 맵은 길찾기 격자를 만드는 데 시간이 걸려 시작 메시지를 최대 10초 기다림
+  for (let i = 0; i < 100 && !(a.start && b.start); i++) await new Promise((r) => setTimeout(r, 100));
   assert.ok(a.start && b.start, '게임 시작 메시지 수신');
   assert.equal(a.start.roster.length, 16, '봇으로 16명 채움');
   assert.ok(!a.start.roster.some((r) => r[1].includes('<')), '이름 정리됨');

@@ -14,14 +14,14 @@ export const BOT_NAMES = [
 
 // 무기별 교전 거리와 스킬 사용 조건
 const AI = {
-  dagger: { pref: 55, reach: 82, q: { min: 60, max: 740, aim: true }, w: { min: 200, max: 650, ground: true }, e: { max: 170 }, r: { max: 520, exec: true } },
-  shuriken: { pref: 450, reach: 660, q: { min: 120, max: 880, aim: true }, w: { max: 560, aim: true }, e: { max: 200, escape: true }, r: { max: 680, aim: true } },
-  scroll: { pref: 580, reach: 785, q: { max: 920, aim: true }, w: { max: 980, aim: true }, e: { max: 200, escape: true }, r: { max: 590, ground: true } },
+  dagger: { pref: 60, reach: 85, q: { max: 330, aim: true }, w: { max: 125 }, e: { min: 200, max: 520, aim: true }, r: { max: 400 } },
+  shuriken: { pref: 470, reach: 630, q: { max: 700, tumble: true }, e: { max: 520, aim: true }, r: { max: 650 } },
+  scroll: { pref: 560, reach: 690, q: { max: 800, aim: true }, w: { max: 600 }, e: { max: 860, aim: true }, r: { max: 650, rush: true } },
 };
 
-const PROJ_SPEED = { shuriken: 1250, scroll: 860 };
+const PROJ_SPEED = { shuriken: 1300, scroll: 1000 };
 // 스킬 투사체 속도 (조준 예측용)
-const SKILL_SPEED = { dagger: 1400, shuriken: 1500, scroll: 1300 };
+const SKILL_SPEED = { dagger: 900, shuriken: 1500, scroll: 1200 };
 
 export function makeBotBrain(rng, skill) {
   return {
@@ -452,29 +452,40 @@ function combat(game, p, b, t, out, dt) {
   const ax = t.x + b.tvx * lead;
   const ay = t.y + b.tvy * lead;
   out.aim = Math.atan2(ay - p.y, ax - p.x) + (rng() - 0.5) * b.aimErr;
-  out.mx = mx;
-  out.my = my;
-  if (d < reach) out.atk = true;
-
-  // 단도: 그림자가 적에게 더 가까우면 W를 다시 눌러 자리 바꾸기 (파고들기)
-  if (w === 'dagger' && t.isPlayer && !p.act) {
+  // 적의 화염 장막이 사이를 막고 있으면: 쏘지 말고 장막 끝 쪽으로 돌아감 (원거리)
+  let wall = null;
+  if (ai.pref > 200) {
     for (const a of game.areas) {
-      if (!a.alive || a.kind !== 'shadow' || a.owner !== p.id || a.swapped || a.slot !== 'w') continue;
-      if (Math.sqrt(dist2(a.x, a.y, t.x, t.y)) + 120 < d && rng() < 0.15 + b.skill * 0.3) {
-        press(p, 'w');
-        b.actCd = 0.2;
-        return;
+      if (!a.alive || a.kind !== 'barrier' || a.team === p.team) continue;
+      const hx = (Math.cos(a.ang) * a.len) / 2;
+      const hy = (Math.sin(a.ang) * a.len) / 2;
+      if (segCross(p.x, p.y, t.x, t.y, a.x - hx, a.y - hy, a.x + hx, a.y + hy)) {
+        wall = a;
+        break;
       }
     }
   }
+  if (wall) {
+    const hx = (Math.cos(wall.ang) * (wall.len / 2 + 90));
+    const hy = (Math.sin(wall.ang) * (wall.len / 2 + 90));
+    const e1 = dist2(p.x, p.y, wall.x + hx, wall.y + hy) < dist2(p.x, p.y, wall.x - hx, wall.y - hy) ? [wall.x + hx, wall.y + hy] : [wall.x - hx, wall.y - hy];
+    const ed = Math.sqrt(dist2(p.x, p.y, e1[0], e1[1])) || 1;
+    mx = (e1[0] - p.x) / ed;
+    my = (e1[1] - p.y) / ed;
+  }
+  out.mx = mx;
+  out.my = my;
+  if (d < reach && !wall) out.atk = true;
+
   if (b.actCd > 0 || p.act || p.dashT > 0) return;
+  if (wall) return; // 장막에 막혀 있으면 스킬도 아낌
   const k = 0.6 * b.skill;
   const px = t.x + b.tvx * k + (rng() - 0.5) * 70 * (1 - b.skill);
   const py = t.y + b.tvy * k + (rng() - 0.5) * 70 * (1 - b.skill);
   const tryUse = (key) => {
     const c = ai[key];
     if (!c) return false;
-    if (key === 'r' ? p.ult < 100 : p.cd[key] > 0) return false;
+    if (key === 'r' ? p.ult < 100 && !(p.st.rushN > 0) : p.cd[key] > 0) return false;
     if (c.min && d < c.min) return false;
     if (c.max && d > c.max + t.r) return false;
     if (c.ground || c.exec) {
@@ -482,6 +493,24 @@ function combat(game, p, b, t, out, dt) {
       p.input.cy = py;
     }
     if (c.escape) return false;
+    // 구르기: 적과 거리를 유지하며 옆으로
+    if (c.tumble) {
+      const side = b.strafe;
+      const back = d < ai.pref ? -0.6 : 0.3;
+      p.input.cx = p.x + (-ny * side + nx * back) * 200;
+      p.input.cy = p.y + (nx * side + ny * back) * 200;
+    }
+    // 질주: 이길 만하면 적 쪽으로, 아니면 반대로
+    if (c.rush) {
+      const away = p.hp < p.maxHp * 0.35 ? -1 : 1;
+      p.input.cx = p.x + nx * 300 * away + -ny * b.strafe * 120;
+      p.input.cy = p.y + ny * 300 * away + nx * b.strafe * 120;
+    }
+    // 화염 장막: 투사체를 쓰는 적에게만, 적 쪽으로 세움
+    if (c.wall) {
+      if (!t.isPlayer || WEAPONS[t.gear.weapon.type].basic.type !== 'proj') return false;
+      out.aim = Math.atan2(t.y - p.y, t.x - p.x);
+    }
     if (c.aim && SKILL_SPEED[w] && key !== 'basic') {
       const ld = (d / SKILL_SPEED[w]) * b.skill;
       out.aim = Math.atan2(t.y + b.tvy * ld - p.y, t.x + b.tvx * ld - p.x) + (rng() - 0.5) * b.aimErr * 0.6;
@@ -491,6 +520,16 @@ function combat(game, p, b, t, out, dt) {
     b.actCd = 0.25;
     return true;
   };
+  // 다시 누르기: 단도 검기는 적 체력이 낮을 때, 두루마리 질주는 남은 횟수를 이어서
+  if (t.isPlayer && w === 'dagger' && p.st.bladeT > 0 && !p.st.bladeWave && d < 560 && (t.hp < t.maxHp * 0.45 || p.st.bladeT < 1.5)) {
+    out.aim = Math.atan2(t.y - p.y, t.x - p.x);
+    press(p, 'r');
+    b.actCd = 0.25;
+    return;
+  }
+  if (w === 'scroll' && p.st.rushN > 0 && p.st.rushGap <= 0 && rng() < 0.08 + b.skill * 0.1 && tryUse('r')) return;
+  // 단도: 3단 베기는 이어서 (끊기기 전에)
+  if (w === 'dagger' && p.st.steps && d < 330 && tryUse('q')) return;
   if (rng() < 0.25 + b.skill * 0.35) {
     if (tryUse('r') || tryUse('w') || tryUse('q') || tryUse('e')) return;
   }
@@ -500,6 +539,15 @@ function combat(game, p, b, t, out, dt) {
     out.dashX = nx;
     out.dashY = ny;
   }
+}
+
+// 두 선분이 교차하는지
+function segCross(ax, ay, bx, by, cx, cy, dx, dy) {
+  const d1 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+  const d2 = (bx - ax) * (dy - ay) - (by - ay) * (dx - ax);
+  const d3 = (dx - cx) * (ay - cy) - (dy - cy) * (ax - cx);
+  const d4 = (dx - cx) * (by - cy) - (dy - cy) * (bx - cx);
+  return d1 * d2 < 0 && d3 * d4 < 0;
 }
 
 function dodge(game, p, b, out) {

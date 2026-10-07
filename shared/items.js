@@ -1,9 +1,7 @@
-// 무기 데이터: 단도 · 표창 · 두루마리 (서로 물고 물리는 상성)
-//   단도 → 두루마리 (파고들면 시전이 느린 술사는 못 버팀)
-//   표창 → 단도     (멀리서 깎고 둔화·공중제비로 거리 유지)
-//   두루마리 → 표창 (속박·눈보라로 사수를 묶음)
-// 스킬셋은 무기마다 고정. 등급이 오를수록 특수효과가 하나씩 붙음
-//   고급 = 평타 강화, 희귀 = Q 강화, 영웅 = W 강화, 전설 = E 강화, 신화 = R 변신
+// 무기 데이터: 단도 · 표창 · 두루마리. 롤에서 1:1 손싸움으로 유명한 셋의 스킬 구성을 빌려 옴 (이름·그림은 닌자식)
+//   단도 = 3단 베기 돌진 검사, 표창 = 구르기·벽꿍 사수, 두루마리 = 구슬·매혹·3번 질주 술사
+// 상성은 스킬이 하는 일에서만 나옴 (수치 보정 없음). 등급이 오를수록 특수효과가 하나씩 붙음
+//   고급 = 평타 강화, 희귀 = Q 강화, 영웅 = W 강화, 전설 = E 강화, 신화 = R 강화
 export const RARITIES = [
   { id: 'common', name: '일반', mult: 1.0, cd: 1.0, color: '#c9c9d6' },
   { id: 'uncommon', name: '고급', mult: 1.04, cd: 1.0, color: '#5fd35f' },
@@ -19,9 +17,9 @@ export const TIER_SLOT = [null, 'basic', 'q', 'w', 'e', 'r'];
 export const STONE_COST = [8, 14, 22, 32];
 
 // 스킬 type 목록 (combat.js에서 실행)
-// melee 부채꼴 근접(combo) / proj 투사체 / fan 부채꼴 다발 투사체 / nova 즉시 내 주변 범위
-// ground 지점 지연 범위 / field 지속 장판 / blinkskill 지점 순간이동 / backflip 뒤로 도약 + 투사체
-// shadow 그림자 분신 / mark 적 뒤로 순간이동 + 표식
+// melee 부채꼴 근접(combo) / proj 투사체 / nova 즉시 내 주변 범위 / dashstrike 돌진(+보호막)
+// steps 3단 돌진 베기(다시 누르기) / bladeUlt 강화 → 다시 누르면 검기 / tumble 구르기 + 다음 평타 강화
+// passive 누를 필요 없음 / hunt 강화 상태(평타 피해·구르면 은신) / foxfire 유도 여우불 / rush 3번 질주 + 유도탄
 export const SKILL_KEYS = ['q', 'w', 'e', 'r'];
 
 export const WEAPONS = {
@@ -29,87 +27,85 @@ export const WEAPONS = {
     id: 'dagger',
     name: '단도',
     icon: '🗡',
-    role: '근접 암살',
+    role: '근접 · 3단 베기 돌진',
     color: '#b28cff',
-    range: 80,
-    hp: 1.16, // 근접은 붙기 전에 맞으니 체력이 더 많음
+    range: 85,
+    hp: 1.22, // 근접은 붙기 전에 맞으니 체력이 더 많음
     speed: 1.08,
     family: 'shadow', // 무기 공명: 🌑그림자 증강
     beats: 'scroll',
+    passive: { name: '칼날 기운', desc: '스킬을 쓸 때마다 칼날 기운 1개 (최대 3개). 기본 공격이 기운 하나를 써서 추가 피해', max: 3, bonus: 55 },
     basic: {
-      name: '연속 찌르기',
+      name: '베기',
       type: 'melee',
       moveMult: 0.7,
       comboWindow: 0.3,
       combo: [
-        { dmg: 48, range: 80, arc: 1.7, windup: 0.05, dur: 0.27, lunge: 20, knock: 0 },
-        { dmg: 48, range: 80, arc: 1.7, windup: 0.05, dur: 0.27, lunge: 20, knock: 0 },
+        { dmg: 52, range: 85, arc: 1.8, windup: 0.05, dur: 0.3, lunge: 18, knock: 0 },
+        { dmg: 52, range: 85, arc: 1.8, windup: 0.05, dur: 0.3, lunge: 18, knock: 0 },
       ],
     },
-    q: { name: '수리검', icon: '✴', type: 'proj', windup: 0.08, dur: 0.22, speed: 1400, range: 760, dmg: 130, r: 10, pierce: 99, fromShadows: true, cd: 6, hint: '나와 그림자들이 커서 쪽으로 관통 수리검을 던짐' },
-    w: { name: '그림자 분신', icon: '👤', type: 'shadow', range: 650, t: 5, cd: 15, hint: '그림자를 보냄. 그림자도 Q·E를 따라 씀. 5초 안에 W를 다시 누르면 그림자와 자리를 바꿈' },
-    e: { name: '그림자 베기', icon: '🌀', type: 'nova', windup: 0.05, dur: 0.2, r: 165, dmg: 120, fromShadows: true, shadowSlow: { amt: 0.35, t: 1.5 }, hitRefund: { w: 2 }, moveMult: 1, cd: 4.5, hint: '나와 그림자 주변을 벰. 그림자에 맞으면 둔화, 맞힐 때마다 W 쿨타임 2초 감소' },
-    r: { name: '죽음의 표식', icon: '☠', type: 'mark', range: 520, dmg: 80, markT: 3, markPct: 0.6, t: 6, hint: '적 뒤로 순간이동(잠깐 무적)하고 표식. 3초 뒤 그동안 준 피해의 60%가 한 번 더 터짐' },
-    passive: { name: '약자 멸시 · 그림자 탈출', desc: '체력 50% 미만인 적을 기본 공격하면 최대 체력의 8% 추가 피해 (대상마다 8초에 한 번). 기절·속박 시간 -40%', lowHp: 0.5, pct: 0.08, cd: 8, tenacity: 0.4 },
+    q: { name: '부서진 날개', icon: '🪶', type: 'steps', dist: 220, time: 0.16, r: 105, dmg: 95, r3: 135, stun3: 0.5, window: 4, gap: 0.3, cd: 7, hint: '커서 쪽으로 짧게 돌진하며 벰. 4초 안에 다시 눌러 3번까지, 3번째는 뛰어올라 내려찍어 기절. 평타 사이사이에 끼우면 빠름' },
+    w: { name: '기 폭발', icon: '💥', type: 'nova', windup: 0.05, dur: 0.2, moveMult: 1, r: 130, dmg: 110, stun: 0.6, cd: 9, hint: '내 주변을 터뜨려 기절' },
+    e: { name: '용맹', icon: '🛡', type: 'dashstrike', dist: 280, time: 0.2, dmg: 0, shield: 200, cd: 9, hint: '커서 쪽으로 돌진하며 보호막' },
+    r: { name: '추방자의 검', icon: '⚔', type: 'bladeUlt', t: 8, buff: 0.2, wave: { count: 7, spread: 0.9, range: 620, speed: 1150, dmg: 120, missing: 0.45 }, hint: '8초간 피해 +20%. 그동안 R을 다시 누르면 부채꼴 검기 (체력이 적은 적일수록 더 아픔)' },
     tiers: [
       null,
-      { o: { combo: [{ dmg: 44, range: 80, arc: 1.7, windup: 0.05, dur: 0.27, lunge: 20, knock: 0 }, { dmg: 44, range: 80, arc: 1.7, windup: 0.05, dur: 0.27, lunge: 20, knock: 0 }, { dmg: 72, range: 92, arc: 2.0, windup: 0.08, dur: 0.36, lunge: 45, knock: 70 }] }, desc: '평타 3번째 찌르기가 강해짐' },
-      { o: { dmg: 140, slow: { amt: 0.25, t: 1.2 } }, desc: '수리검 피해 증가 + 둔화' },
-      { o: { range: 780, cd: 12 }, desc: '분신 사거리 증가 + 쿨타임 12초' },
-      { o: { dmg: 120, r: 190, hitRefund: { w: 3 } }, desc: '그림자 베기 범위·피해 증가, W 쿨 감소 3초' },
-      { o: { markPct: 1.0, dmg: 140 }, desc: '표식 폭발이 그동안 준 피해의 100%' },
+      { o: { combo: [{ dmg: 48, range: 85, arc: 1.8, windup: 0.05, dur: 0.3, lunge: 18, knock: 0 }, { dmg: 48, range: 85, arc: 1.8, windup: 0.05, dur: 0.3, lunge: 18, knock: 0 }, { dmg: 78, range: 95, arc: 2.0, windup: 0.08, dur: 0.36, lunge: 40, knock: 60 }] }, desc: '평타 3번째 베기가 강해짐' },
+      { o: { dmg: 115, r3: 165, stun3: 0.7 }, desc: '부서진 날개 피해 증가 + 3번째 범위·기절 증가' },
+      { o: { r: 160, cd: 7 }, desc: '기 폭발 범위 증가 + 쿨타임 7초' },
+      { o: { shield: 300, cd: 7 }, desc: '용맹 보호막 증가 + 쿨타임 7초' },
+      { o: { t: 10, wave: { count: 9, spread: 1.0, range: 680, speed: 1150, dmg: 150, missing: 0.7 } }, desc: '추방자의 검 10초 + 검기 강화 (처형력 증가)' },
     ],
   },
   shuriken: {
     id: 'shuriken',
     name: '표창',
     icon: '✴',
-    role: '원거리 견제',
+    role: '원거리 · 구르기 사냥꾼',
     color: '#8cff6b',
-    range: 700,
-    hp: 0.96,
+    range: 640,
+    hp: 1.0,
     speed: 1.04,
     family: 'wind', // 🍃바람
     beats: 'dagger',
-    passive: { name: '바람 발걸음', desc: '기본 공격이 맞으면 1초간 이동 속도 +8% (치고 빠지기)', haste: 0.08, t: 1 },
-    basic: { name: '표창 던지기', type: 'proj', windup: 0.1, dur: 0.5, moveMult: 0.85, speed: 1250, range: 700, dmg: 70, r: 8 },
-    q: { name: '대형 표창', icon: '✦', type: 'proj', windup: 0.12, dur: 0.3, speed: 1500, range: 900, dmg: 140, r: 12, refundAll: 1, cd: 5, hint: '빠르고 큰 표창. 맞히면 모든 스킬 쿨타임 1초 감소' },
-    w: { name: '표창 부채', icon: '🎯', type: 'fan', windup: 0.12, dur: 0.3, count: 7, spread: 0.9, speed: 1100, range: 600, dmg: 42, r: 8, slow: { amt: 0.3, t: 1.2 }, cd: 8, hint: '부채꼴로 표창 7개, 맞은 적 둔화' },
-    e: { name: '공중제비', icon: '🤸', type: 'backflip', dist: 260, time: 0.22, proj: { speed: 1300, range: 650, dmg: 80, r: 9, slow: { amt: 0.3, t: 1 } }, cd: 9, hint: '뒤로 공중제비를 돌며 앞쪽으로 표창 (둔화)' },
-    r: { name: '풍마수리검', icon: '🌀', type: 'proj', windup: 0.3, dur: 0.45, moveMult: 0.4, speed: 1050, range: 700, dmg: 160, r: 26, pierce: 99, ret: true, hint: '거대한 수리검이 날아갔다 돌아옴. 갈 때와 올 때 두 번 맞음' },
+    basic: { name: '표창 던지기', type: 'proj', windup: 0.1, dur: 0.5, moveMult: 0.85, speed: 1300, range: 640, dmg: 60, r: 8 },
+    q: { name: '구르기 사격', icon: '🤸', type: 'tumble', dist: 170, time: 0.16, bonus: 40, window: 3, cd: 4, hint: '커서 쪽으로 구르고, 다음 기본 공격이 바로 나가며 강화됨' },
+    w: { name: '은빛 표창', icon: '🥈', type: 'passive', every: 3, base: 20, pct: 0.05, hint: '(자동) 같은 적에게 기본 공격·스킬을 3번 연속 맞히면 최대 체력의 5% + 20 추가 피해' },
+    e: { name: '단죄', icon: '🎯', type: 'proj', windup: 0.12, dur: 0.3, speed: 1500, range: 550, dmg: 80, r: 12, condemn: { dist: 220, stun: 1.2, dmg: 120 }, cd: 12, hint: '큰 표창으로 적을 멀리 밀어냄. 벽·나무·바위에 부딪히면 기절 + 추가 피해' },
+    r: { name: '사냥의 시간', icon: '🌙', type: 'hunt', t: 8, bonus: 20, haste: 0.12, stealth: 1, hint: '8초간 기본 공격 피해 증가·이동 속도 증가. 그동안 구르기를 하면 1초 은신' },
     tiers: [
       null,
-      { o: { pierce: 1 }, desc: '평타 표창이 1명 관통' },
-      { o: { dmg: 165, slow: { amt: 0.25, t: 1.5 } }, desc: '대형 표창 피해 증가 + 둔화' },
-      { o: { count: 9, spread: 1.05 }, desc: '표창 9개' },
-      { o: { cd: 6, proj: { speed: 1300, range: 650, dmg: 120, r: 9, slow: { amt: 0.4, t: 1 } } }, desc: '공중제비 쿨타임 6초 + 표창 강화' },
-      { o: { fan: 3, spread: 0.55 }, desc: '풍마수리검이 3개로 갈라짐' },
+      { o: { dmg: 68 }, desc: '평타 피해 증가' },
+      { o: { bonus: 60, cd: 3.5 }, desc: '구르기 사격 강화 피해 증가 + 쿨타임 3.5초' },
+      { o: { pct: 0.07 }, desc: '은빛 표창 최대 체력 7%' },
+      { o: { condemn: { dist: 260, stun: 1.5, dmg: 160 }, cd: 10 }, desc: '단죄 벽꿍 기절 1.5초 + 쿨타임 10초' },
+      { o: { t: 11, bonus: 32, stealth: 1.5 }, desc: '사냥의 시간 11초 + 평타 피해 더 증가 + 은신 1.5초' },
     ],
   },
   scroll: {
     id: 'scroll',
     name: '두루마리',
     icon: '📜',
-    role: '인술 · 묶고 광역',
+    role: '인술 · 구슬과 매혹',
     color: '#ff7a3d',
-    range: 800,
-    hp: 0.92, // 몸이 약한 대신 멀리서 묶음
+    range: 700,
+    hp: 0.92, // 몸이 약한 대신 멀리서 견제하고 질주로 빠짐
     speed: 1.0,
     family: 'fire', // 🔥화염
     beats: 'shuriken',
-    passive: { name: '잿불', desc: '내 화상에 걸린 적은 원거리 기본 공격 속도 -15%', atkSlow: 0.15 },
-    basic: { name: '불씨', type: 'proj', windup: 0.12, dur: 0.55, moveMult: 0.7, speed: 900, range: 800, dmg: 64, r: 10, dot: { dmg: 32, t: 2 } },
-    q: { name: '화염구', icon: '☄', type: 'proj', windup: 0.15, dur: 0.3, speed: 1300, range: 950, dmg: 135, r: 15, dot: { dmg: 50, t: 2 }, burnStun: 0.6, cd: 6, hint: '이미 불타는 적이 맞으면 0.6초 기절 (먼저 불씨로 지져 놓기)' },
-    w: { name: '서리 속박', icon: '⛓', type: 'proj', windup: 0.2, dur: 0.4, speed: 1400, range: 1000, dmg: 140, r: 16, root: 0.9, cd: 8, hint: '첫 적중 대상을 0.9초 속박' },
-    e: { name: '순간이동', icon: '✨', type: 'blinkskill', range: 320, cd: 15, hint: '커서 쪽으로 짧게 순간이동' },
-    r: { name: '눈보라', icon: '🌨', type: 'field', range: 620, r: 230, t: 4, every: 0.5, dmg: 50, slow: { amt: 0.35, t: 0.6 }, freezeAfter: 2, freeze: 1, dur: 0.3, hint: '4초간 눈보라. 2초 넘게 머물면 빙결' },
+    basic: { name: '여우 구슬탄', type: 'proj', windup: 0.12, dur: 0.55, moveMult: 0.7, speed: 1000, range: 700, dmg: 70, r: 10 },
+    q: { name: '현혹의 구슬', icon: '🔮', type: 'proj', windup: 0.2, dur: 0.35, speed: 1100, range: 820, dmg: 115, r: 16, pierce: 99, ret: true, cd: 5, hint: '구슬이 날아갔다가 돌아옴. 갈 때와 올 때 모두 맞힘' },
+    w: { name: '여우불', icon: '🔥', type: 'foxfire', count: 3, range: 620, dmg: 60, cd: 7, hint: '가까운 적에게 날아가는 여우불 3개' },
+    e: { name: '매혹', icon: '💗', type: 'proj', windup: 0.15, dur: 0.3, speed: 1300, range: 900, dmg: 90, r: 14, charm: 1.3, cd: 10, hint: '처음 맞은 적이 1.3초간 홀려서 나에게 걸어옴 (아무것도 못 함)' },
+    r: { name: '혼령 질주', icon: '🦊', type: 'rush', dashes: 3, window: 10, dist: 300, time: 0.18, gap: 0.6, bolts: 3, boltDmg: 60, boltRange: 600, hint: '커서 쪽으로 질주하며 주변 적에게 유도탄. 10초 안에 R을 다시 눌러 3번까지' },
     tiers: [
       null,
-      { o: { dot: { dmg: 40, t: 2 } }, desc: '불씨 화상 강화' },
-      { o: { burnStun: 0.8, splash: 110 }, desc: '화염구 기절 0.8초 + 주변 폭발' },
-      { o: { pierce: 1, rootAll: true }, desc: '서리 속박이 2명까지 꿰뚫고 모두 속박' },
-      { o: { cd: 10, burn: { r: 70, every: 0.5, dmg: 40, t: 2 } }, desc: '순간이동 쿨타임 10초 + 출발지 불바닥' },
-      { o: { r: 300, freezeAfter: 1.5 }, desc: '눈보라 범위 확대 + 1.5초면 빙결' },
+      { o: { dmg: 80 }, desc: '평타 피해 증가' },
+      { o: { dmg: 160, r: 20 }, desc: '현혹의 구슬 피해·크기 증가' },
+      { o: { count: 4 }, desc: '여우불 4개' },
+      { o: { charm: 1.4, r: 18, cd: 12 }, desc: '매혹 1.4초 + 더 넓게' },
+      { o: { dashes: 4, boltDmg: 80 }, desc: '혼령 질주 4번 + 유도탄 강화' },
     ],
   },
 };
@@ -140,6 +136,8 @@ const extra = (sk) => {
   if (sk.slow) t += ` + 둔화 ${pct(sk.slow.amt)}`;
   if (sk.stun) t += ` + 기절 ${sk.stun}초`;
   if (sk.root) t += ` + 속박 ${sk.root}초`;
+  if (sk.charm) t += ` + 매혹 ${sk.charm}초`;
+  if (sk.condemn) t += ` + 밀쳐내기 (벽꿍 기절 ${sk.condemn.stun}초 + ${sk.condemn.dmg})`;
   return t;
 };
 
@@ -156,6 +154,24 @@ export function skillDesc(sk, isBasic = false) {
       return `주변 반경 ${sk.r}에 ${sk.dmg}${extra(sk)}`;
     case 'field':
       return `${sk.t}초간 반경 ${sk.r}: ${sk.every}초마다 ${sk.dmg} + 둔화 ${pct(sk.slow.amt)}, ${sk.freezeAfter}초 머물면 빙결 ${sk.freeze}초`;
+    case 'steps':
+      return `돌진 베기 ${sk.dmg} ×3 (3번째 범위 ${sk.r3}, 기절 ${sk.stun3}초)`;
+    case 'dashstrike':
+      return `${sk.dist} 돌진${sk.shield ? ` + 보호막 ${sk.shield}` : ''}${sk.dmg ? ` + ${sk.dmg}` : ''}`;
+    case 'bladeUlt':
+      return `${sk.t}초간 피해 +${pct(sk.buff)}, 검기 ${sk.wave.count}갈래 ${sk.wave.dmg} (잃은 체력 비례 최대 +${pct(sk.wave.missing * 2)})`;
+    case 'tumble':
+      return `${sk.dist} 구르기 + 다음 평타 +${sk.bonus}`;
+    case 'passive':
+      return `${sk.every}번째 연속 적중마다 ${sk.base} + 최대 체력 ${pct(sk.pct)}`;
+    case 'hunt':
+      return `${sk.t}초간 평타 +${sk.bonus}, 이동 +${pct(sk.haste)}, 구르면 ${sk.stealth}초 은신`;
+    case 'foxfire':
+      return `유도 여우불 ${sk.count}개, 발당 ${sk.dmg}, 사거리 ${sk.range}`;
+    case 'rush':
+      return `${sk.dist} 질주 ${sk.dashes}번, 매번 유도탄 ${sk.bolts}개 (${sk.boltDmg})`;
+    case 'barrier':
+      return `앞에 길이 ${sk.len} 장막 ${sk.t}초 (적 투사체를 막음)`;
     case 'blinkskill':
       return `최대 ${sk.range} 순간이동${sk.burn ? `, 출발 지점 불바닥(0.5초마다 ${sk.burn.dmg})` : ''}`;
     case 'backflip':

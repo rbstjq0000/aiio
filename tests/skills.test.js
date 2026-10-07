@@ -62,123 +62,135 @@ const results = [];
 const ok = (name) => results.push(name);
 
 // ---------------- 무기 ----------------
-// 단도 W 그림자 + Q: 그림자에서도 수리검이 나감, W 다시 누르면 자리 바꿈
+// 단도 (3단 베기 검사): Q 3번 돌진 베기 + 3번째 기절 / 칼날 기운 / W 기절 / E 보호막 / R 강화 → 검기(처형)
 {
-  const { g, a, d } = duel('dagger', 600);
-  d.y = 300;
-  aimAt(a, 0, 400);
-  cast(g, a, 'w');
-  const sh = g.areas.find((x) => x.kind === 'shadow');
-  assert.ok(sh, '그림자 생성');
-  run(g, 0.3);
+  const { g, a, d } = duel('dagger', 140);
   aimAt(a, d.x, d.y);
-  cast(g, a, 'q');
-  const hits = hitsOn(g, d.id, 0.8);
-  assert.ok(hits.length >= 2, `수리검 적중 ${hits.length}회`);
-  const sx = sh.x;
-  const sy = sh.y;
-  cast(g, a, 'w');
-  assert.ok(Math.hypot(a.x - sx, a.y - sy) < 30, '그림자와 자리 바꿈');
-  ok(`단도 그림자 분신: 수리검 ${hits.length}발 + W 다시 눌러 자리 바꿈`);
-}
-
-// 단도 R 죽음의 표식: 순간이동 + 무적 + 3초 뒤 폭발
-{
-  const { g, a, d } = duel('dagger', 300);
-  aimAt(a, d.x, d.y);
-  cast(g, a, 'r');
-  assert.ok(d.st.mark, '표식');
-  assert.ok(a.st.iframeT > 0, '잠깐 무적');
-  a.input.at = d.id;
-  a.input.atk = true;
-  let popped = false;
-  for (let t = 0; t < 3.3; t += DT) {
-    g.step(DT);
-    for (const e of g.events) if (e.e === 'markpop') popped = true;
-    g.clearEvents();
+  const hp0 = d.hp;
+  let stunned = false;
+  for (let i = 0; i < 3; i++) {
+    a.input.p[PRESS.q]++;
+    for (let t = 0; t < 0.45; t += DT) {
+      g.step(DT);
+      if (d.st.stunT > 0) stunned = true;
+      aimAt(a, d.x, d.y);
+    }
   }
-  assert.ok(popped, '표식 폭발');
-  ok('단도 죽음의 표식: 순간이동 + 무적 + 3초 뒤 폭발');
+  assert.ok(d.hp < hp0 - 150, `3단 베기 피해 ${Math.round(hp0 - d.hp)}`);
+  assert.ok(stunned, '3번째 베기 기절');
+  assert.ok(!a.st.steps && a.cd.q > 2, '3번 다 쓰면 원래 쿨타임');
+  assert.equal(a.st.runes, 3, '스킬마다 칼날 기운');
+  run(g, 1.5);
+  const k = duel('dagger', 70);
+  k.a.st.runes = 1;
+  const h1 = k.d.hp;
+  k.a.input.at = k.d.id;
+  k.a.input.atk = true;
+  run(k.g, 0.3);
+  assert.equal(k.a.st.runes, 0, '기본 공격이 칼날 기운을 씀');
+  assert.ok(h1 - k.d.hp > WEAPONS.dagger.basic.combo[0].dmg * C.PVP_DMG, '칼날 기운 추가 피해');
+  const w = duel('dagger', 90);
+  cast(w.g, w.a, 'w');
+  run(w.g, 0.2);
+  assert.ok(w.d.st.stunT > 0, 'W 기 폭발 기절');
+  cast(w.g, w.a, 'e');
+  assert.ok(w.a.st.shield > 0, 'E 보호막');
+  // R: 강화 → 다시 누르면 검기. 체력이 적은 적에게 더 아픔
+  const hit = (frac) => {
+    const r = duel('dagger', 300);
+    r.d.hp = r.d.maxHp * frac;
+    aimAt(r.a, r.d.x, r.d.y);
+    cast(r.g, r.a, 'r');
+    run(r.g, 0.1);
+    assert.ok(r.a.st.bladeT > 0, 'R 강화');
+    r.a.input.p[PRESS.r]++;
+    const h = r.d.hp;
+    run(r.g, 0.6);
+    return h - r.d.hp;
+  };
+  const full = hit(1);
+  const low = hit(0.4);
+  assert.ok(full > 0 && low > full * 1.4, `검기 처형 (${Math.round(full)} → ${Math.round(low)})`);
+  ok('단도: 3단 베기(3번째 기절) · 칼날 기운 · W 기절 · E 보호막 · R 검기 처형');
 }
 
-// 표창 R 풍마수리검: 갔다가 돌아오며 같은 적을 두 번 맞힘 / 신화는 3갈래
-{
-  const { g, a, d } = duel('shuriken', 350);
-  aimAt(a, d.x, d.y);
-  cast(g, a, 'r');
-  const hits = hitsOn(g, d.id, 2.5);
-  assert.equal(hits.length, 2, `왕복 적중 ${hits.length}회`);
-  assert.ok(!g.projs.some((q) => q.ret), '주인에게 돌아와 사라짐');
-  const m = duel('shuriken', 350, MYTHIC);
-  aimAt(m.a, m.d.x, m.d.y);
-  cast(m.g, m.a, 'r');
-  for (let i = 0; i < 30 && !m.g.projs.some((q) => q.ret); i++) m.g.step(DT);
-  assert.ok(m.g.projs.filter((q) => q.ret).length === 3, '신화: 3갈래');
-  ok('표창 풍마수리검: 왕복 2번 적중, 신화는 3갈래');
-}
-
-// 표창 E 공중제비: 뒤로 도약 + 앞으로 둔화 표창 / Q 적중 시 쿨 감소
+// 표창 (구르기 사수): Q 구르기 + 강화 평타 / W 3연속 적중 추가 피해 / E 벽꿍 기절 / R 사냥의 시간(구르면 은신)
 {
   const { g, a, d } = duel('shuriken', 400);
-  aimAt(a, d.x, d.y);
-  cast(g, a, 'e');
-  run(g, 0.6);
-  assert.ok(a.x < -150, `뒤로 이동 ${Math.round(a.x)}`);
-  assert.ok(d.st.slows.length > 0, '표창 둔화');
-  a.cd.w = 5;
-  aimAt(a, d.x, d.y);
+  aimAt(a, 0, 200);
+  const y0 = a.y;
   cast(g, a, 'q');
-  run(g, 0.6);
-  assert.ok(a.cd.w < 5 - 1 - 0.3, `W 쿨 ${a.cd.w.toFixed(2)}`);
-  ok('표창 공중제비(뒤로 + 둔화) · 대형 표창 적중 시 쿨 감소');
+  run(g, 0.2);
+  assert.ok(a.y > y0 + 100, '커서 쪽으로 구름');
+  assert.ok(a.st.empT > 0 && a.st.emp.proj, '다음 평타 강화');
+  // W: 같은 적에게 3번 연속
+  const s = duel('shuriken', 400);
+  const ev = [];
+  s.a.input.at = s.d.id;
+  s.a.input.atk = true;
+  for (let t = 0; t < 2.5; t += DT) {
+    s.g.step(DT);
+    ev.push(...s.g.events);
+    s.g.clearEvents();
+  }
+  assert.ok(ev.some((e) => e.e === 'silver' && e.id === s.d.id), '3번째 적중마다 은빛 표창');
+  // E: 뒤에 바위가 있으면 벽꿍 기절
+  const c = duel('shuriken', 300);
+  c.g.obstacles.push({ x: 300 + 150, y: 0, r: 40, k: 0 });
+  aimAt(c.a, c.d.x, c.d.y);
+  cast(c.g, c.a, 'e');
+  run(c.g, 0.5);
+  assert.ok(c.d.st.stunT > 0, '바위에 부딪히면 기절');
+  const n = duel('shuriken', 300);
+  aimAt(n.a, n.d.x, n.d.y);
+  cast(n.g, n.a, 'e');
+  run(n.g, 0.5);
+  assert.ok(n.d.st.stunT <= 0 && n.d.x > 400, '벽이 없으면 밀려나기만');
+  // R: 사냥의 시간 중 구르면 은신
+  const h = duel('shuriken', 600);
+  cast(h.g, h.a, 'r');
+  run(h.g, 0.1);
+  aimAt(h.a, 0, 200);
+  cast(h.g, h.a, 'q');
+  assert.ok(h.a.st.huntT > 0 && h.a.st.invisT > 0, '사냥의 시간에 구르면 은신');
+  ok('표창: 구르기 강화 평타 · 은빛 표창 3연속 · 단죄 벽꿍 · 사냥의 시간 은신');
 }
 
-// 두루마리: 불타는 적만 화염구 기절 / 서리 속박 / 눈보라 빙결
+// 두루마리 (구슬·매혹 술사): Q 왕복 / W 유도 여우불 / E 매혹(걸어옴) / R 3번 질주
 {
-  const { g, a, d } = duel('scroll', 400);
+  const { g, a, d } = duel('scroll', 350);
   aimAt(a, d.x, d.y);
   cast(g, a, 'q');
-  let stun1 = false;
-  for (let t = 0; t < 0.8; t += DT) {
-    g.step(DT);
-    if (d.st.stunT > 0) stun1 = true;
-  }
-  assert.ok(!stun1, '처음엔 기절 안 함');
-  a.cd.q = 0;
-  d.st.ccImmT = 0;
-  assert.ok(d.st.burnT > 0, '화상 상태');
-  cast(g, a, 'q');
-  let stun2 = false;
-  for (let t = 0; t < 0.8; t += DT) {
-    g.step(DT);
-    if (d.st.stunT > 0) stun2 = true;
-  }
-  assert.ok(stun2, '불타는 적 기절');
-  run(g, 2);
-  d.st.ccImmT = 0;
-  aimAt(a, d.x, d.y);
-  cast(g, a, 'w');
-  let rooted = false;
-  for (let t = 0; t < 0.9; t += DT) {
-    g.step(DT);
-    if (d.st.rootT > 0) rooted = true;
-  }
-  assert.ok(rooted, '서리 속박');
-  run(g, 2);
-  d.st.ccImmT = 0;
-  a.ult = 100;
-  aimAt(a, d.x, d.y);
-  cast(g, a, 'r');
-  let frozen = false;
-  for (let t = 0; t < 3; t += DT) {
-    d.input.mx = 0;
-    d.input.my = 0;
-    g.step(DT);
-    for (const e of g.events) if (e.e === 'freeze') frozen = true;
-    g.clearEvents();
-  }
-  assert.ok(frozen, '눈보라에 2초 머물면 빙결');
-  ok('두루마리: 화염구(불타는 적 기절) · 서리 속박 · 눈보라 빙결');
+  const hits = hitsOn(g, d.id, 2.5);
+  assert.ok(hits.length >= 2, `구슬 왕복 적중 ${hits.length}회`);
+  const f = duel('scroll', 400);
+  cast(f.g, f.a, 'w');
+  assert.equal(f.g.projs.length, WEAPONS.scroll.w.count, '여우불 3개');
+  assert.ok(hitsOn(f.g, f.d.id, 1.5).length >= 3, '여우불이 따라가 맞힘');
+  const m = duel('scroll', 500);
+  aimAt(m.a, m.d.x, m.d.y);
+  cast(m.g, m.a, 'e');
+  run(m.g, 0.45);
+  assert.ok(m.d.st.charmT > 0, '매혹');
+  const x0 = m.d.x;
+  m.d.input.mx = 1; // 도망치려 해도
+  m.d.input.p[PRESS.q]++;
+  run(m.g, 0.4);
+  assert.ok(m.d.x < x0 - 20, '홀려서 나에게 걸어옴');
+  assert.ok(!m.d.act, '홀린 동안 스킬을 못 씀');
+  const r = duel('scroll', 500);
+  aimAt(r.a, 0, 300);
+  cast(r.g, r.a, 'r');
+  run(r.g, 0.7);
+  r.a.ult = 0; // 다시 누르기는 궁 게이지가 없어도 됨
+  aimAt(r.a, 300, 300);
+  r.a.input.p[PRESS.r]++;
+  run(r.g, 0.7);
+  aimAt(r.a, 300, 0);
+  r.a.input.p[PRESS.r]++;
+  run(r.g, 0.7);
+  assert.equal(r.a.st.rushN, 0, 'R 3번 질주 (게이지는 처음 한 번만)');
+  ok('두루마리: 구슬 왕복 · 여우불 유도 · 매혹(걸어옴, 행동 불가) · 혼령 질주 3번');
 }
 
 // 무기 등급: 수치 배율과 등급 효과 (고급 = 평타, 희귀 = Q, ..., 신화 = R)
@@ -188,8 +200,8 @@ const ok = (name) => results.push(name);
   assert.equal(skillAt(w, 'basic', 1).combo.length, 3);
   assert.equal(skillAt(w, 'q', 1).dmg, w.q.dmg);
   assert.ok(skillAt(w, 'q', 2).dmg > w.q.dmg);
-  assert.equal(skillAt(w, 'r', 4).markPct, w.r.markPct);
-  assert.equal(skillAt(w, 'r', 5).markPct, 1);
+  assert.equal(skillAt(w, 'r', 4).t, w.r.t);
+  assert.ok(skillAt(w, 'r', 5).t > w.r.t);
   const lo = duel('scroll', 900, 0);
   const hi = duel('scroll', 900, 4);
   assert.ok(hi.a.maxHp > lo.a.maxHp * 1.15 && hi.a.cdMult < lo.a.cdMult);

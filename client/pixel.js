@@ -787,6 +787,16 @@ export class PixelRenderer extends Renderer {
   drawStatusPx(p, lx, top, t) {
     const L = this.ctx;
     const f = p.flags || 0;
+    if (f & PF.CHARM) {
+      // 매혹: 머리 위 분홍 하트
+      L.fillStyle = '#ff7ec8';
+      const y = top - 5 + Math.round(Math.sin(t * 8) * 1);
+      L.fillRect(lx - 3, y, 2, 2);
+      L.fillRect(lx + 1, y, 2, 2);
+      L.fillRect(lx - 3, y + 1, 6, 2);
+      L.fillRect(lx - 2, y + 3, 4, 1);
+      L.fillRect(lx - 1, y + 4, 2, 1);
+    }
     if (f & PF.STUN) {
       L.fillStyle = '#ffe14d';
       for (let i = 0; i < 3; i++) {
