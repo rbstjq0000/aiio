@@ -21,6 +21,7 @@ function killTime(weapon, grade = 0) {
   const a = g.addPlayer({ name: 'A', weapon });
   const d = g.addPlayer({ name: 'D', weapon: 'greatsword' });
   g.start();
+  g.land();
   g.monsters.length = 0;
   g.obstacles.length = 0;
   g.rebuildUnits();
@@ -66,7 +67,8 @@ for (const w of WEAPON_IDS) {
 }
 const RANGED = new Set(['longbow', 'firestaff', 'froststaff']);
 for (const [w, t] of Object.entries(ttk)) {
-  const [lo, hi] = RANGED.has(w) ? [4.6, 6.2] : [4.2, 5.5];
+  // 서리 지팡이는 둔화·빙결로 버는 시간이 있어 조금 느려도 됨
+  const [lo, hi] = w === 'froststaff' ? [4.6, 6.8] : RANGED.has(w) ? [4.6, 6.2] : [4.2, 5.5];
   assert.ok(t >= lo && t <= hi, `${w} 처치 시간 ${t.toFixed(2)}초가 목표(${lo}~${hi}초) 밖`);
 }
 
@@ -82,6 +84,7 @@ assert.ok(gap > 1.8 && gap < 2.2);
   const p = g.addPlayer({ name: 'A' });
   g.addPlayer({ name: 'B' });
   g.start();
+  g.land();
   g.rebuildUnits();
   p.invulnT = 0;
   assert.equal(g.stun(p, 3), true);
@@ -93,47 +96,46 @@ assert.ok(gap > 1.8 && gap < 2.2);
   results.push(['CC 규칙', '최대 1초 / 이후 1.5초 면역 확인']);
 }
 
-// 4) 16인 봇 매치 흐름
+// 4) 16인 배틀로얄 봇 매치: 약 8분, 상자·증강이 충분히 돌고 마지막 1명이 남음
 const SEEDS = (process.env.SEEDS || '1,2,3').split(',').map(Number);
 for (const seed of SEEDS) {
   const g = new Game({ seed, fillTo: 16 });
   g.start();
-  const lv = {};
   let firstKill = null;
-  const orbTaken = [];
   let kills = 0;
-  let max2 = 0;
-  let rituals = 0;
-  let maxHeld = 0;
+  let chests = 0;
+  let augs = 0;
+  const tiers = [0, 0, 0];
+  let bounty = 0;
+  const alive = {};
   const t0 = performance.now();
-  while (g.state === 'running') {
+  while (g.state === 'landing' || g.state === 'running') {
     g.step(DT);
     for (const e of g.events) {
       if (e.e === 'kill') {
         kills++;
         if (firstKill == null) firstKill = g.time;
       }
-      if (e.e === 'orbtake') {
-        orbTaken.push(`${Math.round(g.time)}s`);
-        if (e.n >= 2) max2++;
-        maxHeld = Math.max(maxHeld, e.n);
+      if (e.e === 'chest') {
+        chests++;
+        tiers[e.r]++;
       }
-      if (e.e === 'ritual') rituals++;
+      if (e.e === 'aug') augs++;
+      if (e.e === 'bountydrop') bounty++;
     }
     g.clearEvents();
-    for (const m of [120, 300, 540]) {
-      if (lv[m] == null && g.time >= m) {
-        const ps = [...g.players.values()];
-        lv[m] = (ps.reduce((s, p) => s + p.level, 0) / ps.length).toFixed(1);
-      }
-    }
+    for (const m of [120, 240, 360]) if (alive[m] == null && g.state === 'running' && g.time >= m) alive[m] = g.aliveCount();
   }
   const ms = performance.now() - t0;
   assert.ok(g.results && g.results.length === 16);
+  assert.equal(g.results[0].placement, 1);
+  assert.ok(g.time > 390 && g.time < 540, `판 길이 ${g.time.toFixed(0)}초 (목표 약 8분)`);
+  assert.ok(chests >= 30, `상자 ${chests}개`);
+  assert.ok(tiers[2] >= 1, '프리즘 상자가 한 번은 나옴');
   const w = g.results[0];
   results.push([
     `매치 seed ${seed}`,
-    `${Math.floor(g.time / 60)}:${String(Math.floor(g.time % 60)).padStart(2, '0')} 종료(${g.endReason}) · 우승 ${w.name}(${WEAPONS[w.weapon].name}, 점수 ${w.score}, 2등 ${g.results[1].score}) · 처치 ${kills}회, 첫 킬 ${firstKill?.toFixed(0)}s · 평균 레벨 2분 ${lv[120]} / 5분 ${lv[300]} / 9분 ${lv[540] ?? '-'} · 오브 획득 ${orbTaken.length}회 (2개 이상 보유 ${max2}회, 최대 ${maxHeld}개, 승천 시도 ${rituals}회) · ${(g.tick / (ms / 1000) / 30).toFixed(0)}배속`,
+    `${Math.floor(g.time / 60)}:${String(Math.floor(g.time % 60)).padStart(2, '0')} 종료(${g.endReason}) · 우승 ${w.name}(${WEAPONS[w.weapon].name}, ${w.kills}킬, 증강 ${w.augs.length}) · 처치 ${kills}회, 첫 킬 ${firstKill?.toFixed(0)}s · 생존 2분 ${alive[120]} / 4분 ${alive[240]} / 6분 ${alive[360]} · 상자 ${chests} (실버 ${tiers[0]} / 골드 ${tiers[1]} / 프리즘 ${tiers[2]}) · 증강 ${augs} · 현상금 주머니 ${bounty} · ${(g.tick / (ms / 1000) / 30).toFixed(0)}배속`,
   ]);
 }
 

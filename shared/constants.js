@@ -1,5 +1,5 @@
 // 게임 전체 상수. 수치 근거는 docs/COMBAT_DESIGN.md
-export const GAME_TITLE = 'STYX.io';
+export const GAME_TITLE = '닌자 로얄';
 
 // 네트워크
 export const TICK_RATE = 30;
@@ -14,17 +14,19 @@ export const AOI_HALF_H = 760;
 // 시야: 이 거리 안에서 벽에 가리지 않은 것만 보임 (서버가 안 보이는 적 정보는 보내지 않음)
 export const VISION_R = 1000;
 
-// 매치
+// 매치: 16인 배틀로얄, 목숨 1개, 약 8분
 export const MAX_PLAYERS = 16;
 export const LOBBY_COUNTDOWN = 15;
-export const MATCH_TIME = 600;
-export const ORB_TIMES = [120, 240, 360];
-export const ORB_WARN = 30;
-export const RITUAL_TIME = 15;
-export const ZONE_START = 480;
-export const ZONE_END = 600;
-export const ZONE_MIN_FRAC = 0.22;
-export const ZONE_DPS = 0.05; // 초당 최대체력 비율
+export const LANDING_TIME = 10; // 착지 지점 고르는 시간
+export const MATCH_TIME = 480;
+// 자기장 단계: at초에 예고, warn초 뒤부터 shrink초 동안 줄어듦. frac = 처음 맵 대비 반지름, dps = 초당 최대체력 비율
+export const ZONE_PHASES = [
+  { at: 50, warn: 25, shrink: 35, frac: 0.62, dps: 0.02 },
+  { at: 140, warn: 20, shrink: 30, frac: 0.4, dps: 0.03 },
+  { at: 230, warn: 20, shrink: 30, frac: 0.24, dps: 0.05 },
+  { at: 335, warn: 15, shrink: 30, frac: 0.12, dps: 0.08 },
+  { at: 425, warn: 10, shrink: 40, frac: 0.0, dps: 0.12 },
+];
 
 // 플레이어
 export const PLAYER_R = 18;
@@ -32,22 +34,16 @@ export const BASE_HP = 1400; // 1:1 다 맞아도 약 7초 (롤 초반 교전처
 export const BASE_SPEED = 200; // 기본 이동 속도 (250은 너무 빨라서 20% 낮춤)
 export const LEVEL_MAX = 15;
 export const LEVEL_BONUS = 0.015; // 레벨당 체력·피해 (15레벨 = ×1.21)
-export const RESPAWN_BASE = 8;
-export const RESPAWN_PER_MIN = 1.2;
-export const RESPAWN_PER_LEVEL = 1;
-export const RESPAWN_MAX = 30;
-export const RESPAWN_PROTECT = 2;
-export const SPAWN_PROTECT = 3;
+export const SPAWN_PROTECT = 3; // 착지 직후 무적
 // 체력 회복: 항상 초당 0.8% + 4초간 피해를 안 받으면 초당 4% 추가 (풀피까지 약 20초)
 export const REGEN_BASE = 0.008;
 export const REGEN_DELAY = 4;
 export const REGEN_RATE = 0.04;
-// 오브를 주운 직후 무적 (주우러 들어간 사람이 바로 터지지 않게)
-export const ORB_PROTECT = 2;
-export const KILL_HEAL = 0.25;
-// 오브 보유 효과: 페널티는 위치 공개(시야 공유)뿐, 대신 확실한 이득
-export const ORB_HP_PER = 0.08; // 오브 1개당 최대 체력 +8%
-export const ORB_SPEED_PER = 0.04; // 오브 1개당 이동 속도 +4%
+export const KILL_HEAL = 0.3;
+// 현상금: 연속 처치 수만큼 쌓이고, 죽으면 주머니(상자)가 터짐
+export const BOUNTY_MIN = 2;
+// 치명타 배율 (증강으로 확률을 얻음)
+export const CRIT_MULT = 1.75;
 
 // 전투 규칙
 export const CC_MAX = 1;
@@ -60,11 +56,10 @@ export const ULT_PASSIVE = 1; // 초당 1%
 export const KB_DAMP = 8;
 export const KB_MAX = 1400;
 
-// 상자/장비
-export const CHEST_COUNT = 30;
+// 상자 (열면 증강 3개 중 1개 선택)
 export const CHEST_OPEN = 0.6; // 상자 여는 시간 (맞아도 안 끊김, 움직이면 끊김)
-export const CHEST_RESPAWN = 60;
 export const INTERACT_RANGE = 90;
+export const OFFER_TIME = 12; // 증강 고르는 시간 (지나면 무작위)
 
 // 입력 누름 횟수 카운터 인덱스: [좌클릭 공격, Q, W, E, R, D, F, 상호작용(우클릭으로 상자/장비)]
 export const PRESS = { atk: 0, q: 1, w: 2, e: 3, r: 4, d: 5, f: 6, act: 7 };
@@ -86,24 +81,15 @@ export function levelMult(level) {
   return 1 + LEVEL_BONUS * (level - 1);
 }
 
-// 롤식: 시간이 지날수록, 레벨이 높을수록 길어짐 (초반 8초 → 후반 최대 30초)
-export function respawnDelay(time, level = 1) {
-  return Math.min(RESPAWN_MAX, RESPAWN_BASE + (time / 60) * RESPAWN_PER_MIN + (level - 1) * RESPAWN_PER_LEVEL);
-}
-
-export function mapRadiusFor(n) {
-  return Math.max(1500, Math.min(2700, 1100 + 100 * n));
-}
-
-// 판 종료 보상 (오볼 = 무료 재화)
-export function computeRewards({ placement, total, kills, orbs = 0, won = false }) {
+// 판 종료 보상 (코인 = 무료 재화)
+export function computeRewards({ placement, total, kills, won = false }) {
   let place = 0;
   if (won || placement === 1) place = 60;
   else if (placement === 2) place = 35;
   else if (placement === 3) place = 25;
   else if (placement <= 5) place = 12;
   else if (placement <= Math.ceil(total / 2)) place = 6;
-  const obols = 10 + kills * 5 + orbs * 10 + place;
-  const xp = 30 + kills * 10 + orbs * 20 + place * 2;
+  const obols = 10 + kills * 5 + place;
+  const xp = 30 + kills * 10 + place * 2;
   return { obols, xp };
 }

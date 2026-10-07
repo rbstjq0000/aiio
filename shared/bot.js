@@ -2,7 +2,7 @@
 // 사냥 → 상자/장비 → 오브 쟁탈 → 교전/후퇴
 import { dist2 } from './math.js';
 import { PRESS } from './constants.js';
-import { WEAPONS, runeResult } from './items.js';
+import { WEAPONS } from './items.js';
 
 export const BOT_NAMES = [
   '그림자여우', 'Noctis', '망자의왕', 'Kairos', '하늘조각', 'Rinne', '불멸의토끼', 'Ashen',
@@ -100,14 +100,15 @@ export function botThink(game, p, dt) {
   act(game, p, b, dt);
 }
 
-// 상대와 나의 전투력 비교 (체력 × 레벨 × 장비)
-function power(u) {
-  return u.hp * (1 + 0.015 * (u.level - 1)) * (1 + 0.04 * (u.grade.q + u.grade.w + u.grade.e) / 3);
+// 시간별 목표 생존 인원: 8분 판이 되도록 (2분 ≈ 14명, 4분 ≈ 10명, 6분 ≈ 5명)
+function desiredAlive(game) {
+  const k = Math.min(1, Math.max(0, game.time / 490));
+  return game.startCount * (1 - k ** 1.5);
 }
 
-function better(p, item) {
-  if (item.kind === 'skill') return runeResult(p.grade[item.type], item.rarity) >= 0;
-  return item.rarity > p.gear[item.kind].rarity;
+// 상대와 나의 전투력 비교 (체력 × 레벨 × 증강 수)
+function power(u) {
+  return u.hp * (1 + 0.015 * (u.level - 1)) * (1 + 0.05 * u.augs.length);
 }
 
 function decide(game, p, b) {
@@ -115,9 +116,12 @@ function decide(game, p, b) {
   const z = game.zone;
   b.goal = null;
 
-  if (z.active && dist2(p.x, p.y, z.x, z.y) > (z.r * 0.85) ** 2) {
+  // 자기장: 밖이거나, 곧 줄어들 원 밖이면 안쪽으로
+  const outNow = z.dps > 0 && dist2(p.x, p.y, z.x, z.y) > (z.r * 0.88) ** 2;
+  const outNext = z.stage !== 'wait' && dist2(p.x, p.y, z.tx, z.ty) > (z.tr * 0.85) ** 2;
+  if (outNow || (outNext && (z.stage === 'shrink' || z.stageT < 12))) {
     b.mode = 'goto';
-    b.goal = [z.x, z.y];
+    b.goal = outNext ? [z.tx, z.ty] : [z.x, z.y];
     return;
   }
 
@@ -135,15 +139,10 @@ function decide(game, p, b) {
   }
   const ed = Math.sqrt(ed2);
 
-  // 내가 오브를 들고 있으면: 적을 피해 다님 (승천 의식 중엔 특히)
-  if (p.orbs.length && enemy && ed < 450 && power(p) < power(enemy) * 1.3) {
-    b.mode = 'flee';
-    b.target = enemy.id;
-    return;
-  }
-
+  // 판 흐름 조절: 생존 인원이 목표 곡선보다 적으면 봇끼리는 먼저 싸움을 걸지 않음 (사람은 영향 없음)
+  const pace = game.aliveCount() > desiredAlive(game);
   let attacker = game.time - p.lastHitByT < 3 ? game.players.get(p.lastHitBy) : null;
-  if (attacker && attacker.isBot && game.time < 60 && !(attacker.brain.mode === 'fight' && attacker.brain.target === p.id)) {
+  if (attacker && attacker.isBot && (game.time < 60 || !pace) && !(attacker.brain.mode === 'fight' && attacker.brain.target === p.id)) {
     b.avoidId = attacker.id;
     b.avoidT = 2.5;
     attacker = null;
@@ -151,27 +150,16 @@ function decide(game, p, b) {
   if (attacker && attacker.alive && dist2(p.x, p.y, attacker.x, attacker.y) < 600 * 600) enemy = attacker;
   const defending = !!attacker && enemy === attacker;
 
-  // 오브 보유자 추격 (의식 중이면 멀리서도)
-  let carrier = null;
-  let cd2 = Infinity;
-  for (const q of game.players.values()) {
-    if (!q.alive || q === p || !q.orbs.length) continue;
-    const lim = q.ritualT >= 0 ? 2600 : 1300;
-    const d = dist2(p.x, p.y, q.x, q.y);
-    if (d < lim * lim && d < cd2) {
-      cd2 = d;
-      carrier = q;
-    }
-  }
-
-  const ramp = Math.min(1, Math.max(0, (game.time - 60) / 150));
-  const engage = (game.time < 60 ? 0 : 200 + ramp * 360) * (0.7 + b.aggro * 0.6);
+  // 시간이 갈수록 호전적으로: 초반엔 파밍 위주, 후반(자기장 3단계 이후)엔 적극적으로 싸움
+  const ramp = Math.min(1, Math.max(0, (game.time - 45) / 280));
+  const engage = (game.time < 45 ? 0 : 90 + ramp * 470) * (0.7 + b.aggro * 0.6);
   // 이미 둘 이상이 노리는 상대에겐 끼어들지 않음 (한 명을 우르르 몰려가 잡는 것 방지)
   let ganged = 0;
   if (enemy) for (const q of game.players.values()) if (q !== p && q.isBot && q.alive && q.brain.mode === 'fight' && q.brain.target === enemy.id) ganged++;
-  if (enemy && (ed < engage || defending || enemy.orbs.length) && p.invulnT <= 0 && (ganged < 1 || defending || enemy.orbs.length)) {
-    const courage = defending ? 0.85 + b.aggro * 0.5 : 0.55 + b.aggro * 0.6;
-    const brave = power(p) * courage > power(enemy) || enemy.hp < enemy.maxHp * 0.25 || (enemy.orbs.length && hpR > 0.5);
+  const allowed = defending || !enemy || !enemy.isBot || pace;
+  if (enemy && allowed && (ed < engage || defending) && p.invulnT <= 0 && (ganged < 1 || defending)) {
+    const courage = defending ? 0.85 + b.aggro * 0.5 : (0.35 + ramp * 0.25) + b.aggro * 0.5;
+    const brave = power(p) * courage > power(enemy) || enemy.hp < enemy.maxHp * 0.25;
     if (brave) {
       b.mode = 'fight';
       b.target = enemy.id;
@@ -183,71 +171,13 @@ function decide(game, p, b) {
       return;
     }
   }
-  if (carrier && hpR > 0.55 && (carrier.ritualT >= 0 || power(p) > power(carrier) * 0.8)) {
-    b.mode = 'fight';
-    b.target = carrier.id;
-    return;
-  }
-
-  // 떨어진 오브 줍기
-  let orb = null;
-  let od2 = 1800 * 1800;
-  for (const o of game.groundOrbs) {
-    const d = dist2(p.x, p.y, o.x, o.y);
-    if (d < od2) {
-      od2 = d;
-      orb = o;
-    }
-  }
-  if (orb && hpR > 0.4) {
-    b.mode = 'goto';
-    b.goal = [orb.x, orb.y];
-    return;
-  }
-
-  // 좋은 장비 줍기
-  let item = null;
-  let id2 = 450 * 450;
-  for (const g of game.items) {
-    if (!better(p, g.item)) continue;
-    const d = dist2(p.x, p.y, g.x, g.y);
-    if (d < id2) {
-      id2 = d;
-      item = g;
-    }
-  }
-  if (item) {
-    b.mode = 'item';
-    b.itemId = item.id;
-    b.goal = [item.x, item.y];
-    return;
-  }
-
-  // 오브 수호자 / 곧 열릴 제단 (레벨이 되면)
-  const ready = p.level >= 4 && hpR > 0.6;
-  if (ready) {
-    for (const al of game.altars) {
-      if (al.state === 'guarded') {
-        const g = game.byId.get(al.guardian);
-        if (g && g.alive && dist2(p.x, p.y, g.x, g.y) < 1800 * 1800) {
-          b.mode = 'farm';
-          b.target = g.id;
-          return;
-        }
-      } else if (al.state === 'warn' && dist2(p.x, p.y, al.x, al.y) < 1600 * 1600) {
-        b.mode = 'goto';
-        b.goal = [al.x + Math.cos(p.id) * 180, al.y + Math.sin(p.id) * 180];
-        return;
-      }
-    }
-  }
-
   // 상자 (근처에 적이 없을 때)
   if (!enemy || ed > 450) {
     let chest = null;
-    let c2 = 600 * 600;
+    let c2 = 900 * 900;
     for (const c of game.chests) {
       if (c.open) continue;
+      if (z.dps > 0 && dist2(c.x, c.y, z.x, z.y) > z.r * z.r) continue;
       const d = dist2(p.x, p.y, c.x, c.y);
       if (d < c2) {
         c2 = d;
@@ -343,10 +273,15 @@ function act(game, p, b, dt) {
     b.wanderT -= dt;
     if (b.wanderT <= 0 || dist2(p.x, p.y, b.wx, b.wy) < 60 * 60) {
       b.wanderT = 3 + rng() * 3;
-      // 빈 곳 중 아무 정글 캠프 근처로
-      const c = game.camps[Math.floor(rng() * game.camps.length)];
-      b.wx = c ? c.x + (rng() - 0.5) * 200 : 0;
-      b.wy = c ? c.y + (rng() - 0.5) * 200 : 0;
+      // 안전지대 안의 정글 캠프나 무작위 지점으로
+      const z = game.zone;
+      const zr = Math.min(z.r, game.R) * 0.8;
+      const inside = game.camps.filter((c) => dist2(c.x, c.y, z.x, z.y) < zr * zr);
+      const c = inside.length && rng() < 0.6 ? inside[Math.floor(rng() * inside.length)] : null;
+      const a = rng() * Math.PI * 2;
+      const d = Math.sqrt(rng()) * zr;
+      b.wx = c ? c.x + (rng() - 0.5) * 200 : z.x + Math.cos(a) * d;
+      b.wy = c ? c.y + (rng() - 0.5) * 200 : z.y + Math.sin(a) * d;
     }
     [out.mx, out.my] = navDir(game, p, b, b.wx, b.wy);
   }

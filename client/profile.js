@@ -7,8 +7,8 @@ export const QUEST_POOL = [
   { id: 'play3', name: '3판 플레이', goal: 3, stat: 'games', reward: 60 },
   { id: 'kill8', name: '플레이어 8명 처치', goal: 8, stat: 'kills', reward: 80 },
   { id: 'chest10', name: '상자 10개 열기', goal: 10, stat: 'chests', reward: 60 },
-  { id: 'orb2', name: '오브 2번 획득', goal: 2, stat: 'orbTakes', reward: 90 },
-  { id: 'score100', name: '오브 점수 100점 모으기', goal: 100, stat: 'score', reward: 80 },
+  { id: 'top5', name: '5위 안에 2번 들기', goal: 2, stat: 'top5', reward: 90 },
+  { id: 'aug15', name: '증강 15개 고르기', goal: 15, stat: 'augs', reward: 70 },
   { id: 'top3', name: '3위 안에 들기', goal: 1, stat: 'top3', reward: 100 },
   { id: 'win1', name: '1위 하기', goal: 1, stat: 'wins', reward: 150 },
   { id: 'mon60', name: '몬스터 60마리 처치', goal: 60, stat: 'monsterKills', reward: 50 },
@@ -101,7 +101,7 @@ export class Profile {
   }
 
   quests() {
-    return this.data.daily.quests.map((q) => ({ ...QUEST_POOL.find((p) => p.id === q.id), ...q }));
+    return this.data.daily.quests.filter((q) => QUEST_POOL.some((p) => p.id === q.id)).map((q) => ({ ...QUEST_POOL.find((p) => p.id === q.id), ...q }));
   }
 
   claimQuest(id) {
@@ -181,9 +181,10 @@ export class Profile {
       d.obols += 50;
       levels++;
     }
-    const delta = { games: 1, kills: r.kills, chests: r.chests, orbTakes: r.orbTakes || 0, score: r.score || 0, top3: r.placement <= 3 ? 1 : 0, wins: r.placement === 1 ? 1 : 0, monsterKills: r.monsterKills };
+    const delta = { games: 1, kills: r.kills, chests: r.chests, augs: r.augs ? r.augs.length : 0, top5: r.placement <= 5 ? 1 : 0, top3: r.placement <= 3 ? 1 : 0, wins: r.placement === 1 ? 1 : 0, monsterKills: r.monsterKills };
     for (const q of d.daily.quests) {
       const def = QUEST_POOL.find((p) => p.id === q.id);
+      if (!def) continue;
       q.progress = Math.min(def.goal, q.progress + (delta[def.stat] || 0));
     }
     this.save();

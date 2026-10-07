@@ -1,8 +1,9 @@
-// 직업 스킬 메커니즘 검증: 끌어당기기, 깃발 돌진, 처형, 강화 공격, 유도탄, 합성, 오브 무적 등
+// 직업 스킬·배틀로얄 규칙 검증: 끌어당기기, 깃발 돌진, 처형, 강화 공격, 유도탄, 증강, 상자, 현상금, 착지 등
 import assert from 'node:assert/strict';
 import { Game, PRESS } from '../shared/sim.js';
 import * as C from '../shared/constants.js';
-import { runeResult, makeItem } from '../shared/items.js';
+import { AUGMENTS, AUG_BY_ID, CHEST_ODDS, rollTier, pickOffer } from '../shared/augments.js';
+import { makeRng } from '../shared/math.js';
 
 const DT = C.DT;
 
@@ -12,7 +13,11 @@ function duel(weapon, dx = 300, grade = 0) {
   const a = g.addPlayer({ name: 'A', weapon });
   const d = g.addPlayer({ name: 'D', weapon: 'greatsword' });
   g.start();
+  g.land();
   g.monsters.length = 0;
+  g.obstacles = [];
+  g.obstacles.walls = [];
+  g.walls = [];
   g.rebuildUnits();
   a.x = 0;
   a.y = 0;
@@ -167,6 +172,7 @@ const ok = (name) => results.push(name);
 {
   const { g, a, d } = duel('firestaff', 400);
   const b = g.addPlayer({ name: 'B', weapon: 'greatsword' });
+  b.landed = true;
   b.x = 450;
   b.y = 120;
   b.invulnT = 0;
@@ -210,6 +216,7 @@ const ok = (name) => results.push(name);
   const g = new Game({ seed: 4, fillTo: 1 });
   const p = g.addPlayer({ name: 'A' });
   g.start();
+  g.land();
   const camp = g.camps.find((c) => c.alive && c.type === 'large');
   p.x = camp.x + 120;
   p.y = camp.y;
@@ -287,29 +294,128 @@ const ok = (name) => results.push(name);
   ok('서리 속박: 속박 확인');
 }
 
-// 각인 합성 규칙
-assert.equal(runeResult(1, 1), 2);
-assert.equal(runeResult(1, 3), 3);
-assert.equal(runeResult(2, 1), -1);
-assert.equal(runeResult(4, 4), -1);
+// 상자 등급 확률: 큰 상자·현상금 주머니일수록 좋은 등급
 {
-  const { g, a } = duel('greatsword', 900);
-  a.grade.q = 2;
-  const gi = g.dropItem(makeItem('skill', 'q', 2), a.x, a.y);
-  g.equip(a, gi);
-  assert.equal(a.grade.q, 3);
-  ok('각인 합성: 희귀 + 희귀 → 영웅');
+  const rng = makeRng(9);
+  const avg = (kind) => {
+    let sum = 0;
+    for (let i = 0; i < 4000; i++) sum += rollTier(rng, kind);
+    return sum / 4000;
+  };
+  const s = avg('small');
+  const b = avg('big');
+  const q = avg('bounty');
+  assert.ok(s < b && b < q, `평균 등급 ${s.toFixed(2)} < ${b.toFixed(2)} < ${q.toFixed(2)}`);
+  for (const k in CHEST_ODDS) assert.ok(Math.abs(CHEST_ODDS[k].reduce((x, y) => x + y, 0) - 1) < 1e-9);
+  // 같은 등급에서 겹치지 않는 3개, 가진 건 제외
+  const ids = pickOffer(rng, 1, ['chain']);
+  assert.equal(ids.length, 3);
+  assert.equal(new Set(ids).size, 3);
+  assert.ok(!ids.includes('chain') && ids.every((id) => AUG_BY_ID[id].tier === 1));
+  ok('상자 등급 확률 + 증강 3개 제시');
 }
 
-// 오브를 주우면 2초 무적
+// 상자 열기 → 증강 제안 → 선택하면 적용 (안 고르면 시간이 지나 무작위)
 {
   const { g, a } = duel('greatsword', 900);
-  g.groundOrbs.push({ i: 0, x: a.x, y: a.y, t: 5, taken: false });
-  g.altars[0].state = 'dropped';
+  const c = g.addChest(a.x + 40, a.y, 'big');
+  a.input.ti = c.id;
+  a.input.p[PRESS.act]++;
+  run(g, C.CHEST_OPEN + 0.3);
+  assert.ok(c.open, '상자 열림');
+  assert.equal(a.offers.length, 1);
+  const o = a.offers[0];
+  const hp0 = a.maxHp;
+  a.input.po = o.id;
+  a.input.pk = 2;
   g.step(DT);
-  assert.equal(a.orbs.length, 1);
-  assert.ok(a.invulnT > 1.8);
-  ok('오브 획득: 2초 무적');
+  assert.equal(a.augs.length, 1);
+  assert.equal(a.augs[0], o.ids[1]);
+  assert.equal(a.offers.length, 0);
+  // 시간 초과 → 자동 선택
+  g.offerAugment(a, 0);
+  a.input.po = 0;
+  run(g, C.OFFER_TIME + 0.2);
+  assert.equal(a.augs.length, 2, '시간 초과 시 무작위 선택');
+  ok(`상자 → 증강 3택1 (${a.augs.join(', ')}) · 최대 체력 ${hp0}→${a.maxHp}`);
+}
+
+// 증강 효과: 단련(능력치), Q 각성(등급), 불사(죽을 피해 1번 버팀), 도박사(골드 1개 추가)
+{
+  const { g, a, d } = duel('greatsword', 900);
+  const hp0 = a.maxHp;
+  g.applyAugment(a, 'tough');
+  assert.equal(a.maxHp, Math.round(hp0 * 1.15));
+  g.applyAugment(a, 'qawaken');
+  assert.equal(a.grade.q, 3);
+  g.applyAugment(a, 'undying');
+  g.dealDamage(d, a, a.hp + 500, { kind: 'skill', pre: true });
+  assert.ok(a.alive && a.hp > 0 && a.invulnT > 1, '불사 발동');
+  g.dealDamage(d, a, a.hp + 500, { kind: 'skill', pre: true });
+  run(g, 2.2);
+  g.dealDamage(d, a, a.hp + 500, { kind: 'skill', pre: true });
+  assert.ok(!a.alive, '불사는 한 번만');
+  const { g: g2, a: b } = duel('daggers', 900);
+  g2.applyAugment(b, 'gambler');
+  assert.equal(b.augs.length, 2);
+  assert.equal(AUG_BY_ID[b.augs[1]].tier, 1);
+  assert.ok(b.luck >= 0.5);
+  ok('증강 효과: 능력치 · 스킬 각성 · 불사 · 도박사');
+}
+
+// 현상금: 2킬 이상 쌓은 사람이 죽으면 현상금 주머니 상자가 떨어짐 + 목숨 1개 (부활 없음)
+{
+  const g = new Game({ seed: 5, fillTo: 3 });
+  const a = g.addPlayer({ name: 'A' });
+  const b = g.addPlayer({ name: 'B' });
+  const c = g.addPlayer({ name: 'C' });
+  g.start();
+  g.land();
+  b.kills = 3;
+  a.invulnT = b.invulnT = c.invulnT = 0;
+  const n0 = g.chests.length;
+  g.dealDamage(a, b, b.hp + 10, { kind: 'skill', pre: true });
+  assert.ok(!b.alive);
+  assert.equal(b.placement, 3);
+  assert.equal(a.kills, 1);
+  assert.ok(g.chests.slice(n0).some((q) => q.kind === 'bounty'), '현상금 주머니');
+  run(g, 10);
+  assert.ok(!b.alive, '부활하지 않음');
+  g.dealDamage(a, c, c.hp + 10, { kind: 'skill', pre: true });
+  assert.equal(g.state, 'ended');
+  assert.equal(g.results[0].id, a.id);
+  assert.equal(g.results[1].id, c.id);
+  ok('현상금 주머니 + 목숨 1개 + 마지막 1명 우승');
+}
+
+// 착지: 고른 지점 근처에 내리고, 착지 전에는 시간이 흐르지 않음
+{
+  const g = new Game({ seed: 6, fillTo: 4 });
+  const a = g.addPlayer({ name: 'A' });
+  g.start();
+  assert.equal(g.state, 'landing');
+  g.setInput(a.id, { s: 1, lx: 900, ly: -400, p: [] });
+  for (let t = 0; t < C.LANDING_TIME + 0.1; t += DT) g.step(DT);
+  assert.equal(g.state, 'running');
+  assert.ok(Math.hypot(a.x - 900, a.y + 400) < 300, `착지 위치 ${Math.round(a.x)},${Math.round(a.y)}`);
+  assert.ok(a.invulnT > 0, '착지 직후 잠깐 무적');
+  ok('착지 지점 선택');
+}
+
+// 자기장: 단계가 지나면 원이 줄고 바깥은 피해
+{
+  const { g, a } = duel('greatsword', 900);
+  g.time = C.ZONE_PHASES[0].at;
+  run(g, C.ZONE_PHASES[0].warn + C.ZONE_PHASES[0].shrink + 1);
+  assert.ok(g.zone.r < g.R, `자기장 반지름 ${Math.round(g.zone.r)}`);
+  a.x = g.zone.x + g.zone.r + 200;
+  a.y = g.zone.y;
+  a.invulnT = 0;
+  const hp0 = a.hp;
+  a.lastDmgT = g.time;
+  run(g, 2);
+  assert.ok(a.hp < hp0, '자기장 밖 피해');
+  ok('자기장 축소 + 바깥 피해');
 }
 
 // 가만히 있어도 체력이 조금씩 참

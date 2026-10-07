@@ -1,14 +1,15 @@
-// 진입점: 메뉴 / 상점 / 로비 / 게임 / 결과 화면 연결
-import { WEAPONS, WEAPON_IDS, RARITIES } from '../shared/items.js';
-import { COSMETICS, COSMETIC_MAP, COSMETIC_TYPES, RARITY_LABEL, RARITY_COLOR } from '../shared/cosmetics.js';
-import { MAX_PLAYERS } from '../shared/constants.js';
-import { Renderer } from './render.js';
+// 진입점: 메뉴 / 상점 / 로비 / 게임 / 탈락·결과 화면 연결
+import { WEAPONS, WEAPON_IDS } from '../shared/items.js';
+import { COSMETICS, COSMETIC_TYPES, RARITY_LABEL, RARITY_COLOR } from '../shared/cosmetics.js';
+import { AUG_BY_ID, AUG_TIERS } from '../shared/augments.js';
+import { computeRewards, MAX_PLAYERS } from '../shared/constants.js';
+import { PixelRenderer } from './pixel.js';
 import { Input } from './input.js';
 import { Hud, escapeHtml } from './hud.js';
 import { GameClient } from './game.js';
 import { WSTransport, LocalTransport } from './net.js';
 import { Profile, STREAK_REWARDS, GEM_PACKS } from './profile.js';
-import { play, unlockAudio, setVolume } from './audio.js';
+import { loadAssets, IMG, lookOf, FLOOR, SPR } from './assets.js';
 
 const $ = (id) => document.getElementById(id);
 const STANDALONE = !!window.__STYX_STANDALONE__ || location.protocol === 'file:';
@@ -16,16 +17,17 @@ const ADS_ENABLED = new URLSearchParams(location.search).has('ads');
 
 const profile = new Profile();
 const canvas = $('game');
-const renderer = new Renderer(canvas);
+const renderer = new PixelRenderer(canvas);
 const input = new Input(canvas);
 const hud = new Hud(renderer);
 let client = null;
 let transport = null;
 let lastMode = null;
 let lastEnd = null;
+let applied = false; // 이번 판 보상을 이미 받았는지 (탈락 순간 or 종료 때 한 번)
 
-setVolume(profile.d.settings.volume);
 renderer.settings.shake = profile.d.settings.shake;
+const assetsReady = loadAssets();
 
 // ---------------- 공통 ----------------
 function toast(msg, ms = 2600) {
@@ -37,7 +39,6 @@ function toast(msg, ms = 2600) {
 
 function openModal(id) {
   $(id).classList.remove('hidden');
-  play('ui');
 }
 
 function closeModal(id) {
@@ -50,65 +51,88 @@ document.querySelectorAll('.overlay').forEach((o) =>
     if (e.target === o && !['lobby', 'end', 'adbreak'].includes(o.id)) o.classList.add('hidden');
   }),
 );
-addEventListener('pointerdown', unlockAudio, { once: false });
 
-// 메뉴 배경: 떠오르는 영혼 불씨
+// ---------------- 메뉴 배경: 도트 풀밭 + 흩날리는 꽃잎 ----------------
 const bg = $('menubg');
 const bgCtx = bg.getContext('2d');
-const embers = Array.from({ length: 90 }, () => ({ x: Math.random(), y: Math.random(), s: 0.5 + Math.random() * 2.5, v: 0.02 + Math.random() * 0.05, h: Math.random() < 0.7 ? 165 : 30 }));
+const petals = Array.from({ length: 50 }, () => ({ x: Math.random(), y: Math.random(), s: 1 + Math.floor(Math.random() * 2), v: 0.02 + Math.random() * 0.04, p: Math.random() * 6 }));
+let bgTile = null;
 function drawMenuBg(t) {
   if ($('menu').classList.contains('hidden')) return requestAnimationFrame(drawMenuBg);
-  const w = (bg.width = innerWidth);
-  const h = (bg.height = innerHeight);
-  const g = bgCtx.createRadialGradient(w / 2, h * 1.1, 0, w / 2, h * 1.1, h * 1.2);
-  g.addColorStop(0, '#3a1430');
-  g.addColorStop(0.45, '#150f26');
-  g.addColorStop(1, '#07060d');
-  bgCtx.fillStyle = g;
-  bgCtx.fillRect(0, 0, w, h);
-  bgCtx.globalCompositeOperation = 'lighter';
-  for (const e of embers) {
-    e.y -= e.v / 60;
-    e.x += Math.sin(t / 1000 + e.s * 3) * 0.0004;
-    if (e.y < -0.05) {
-      e.y = 1.05;
-      e.x = Math.random();
-    }
-    const a = 0.25 + 0.35 * Math.sin(t / 400 + e.s * 10);
-    bgCtx.fillStyle = `hsla(${e.h},100%,70%,${a})`;
-    bgCtx.beginPath();
-    bgCtx.arc(e.x * w, e.y * h, e.s, 0, Math.PI * 2);
-    bgCtx.fill();
+  const S = 3;
+  const w = Math.ceil(innerWidth / S);
+  const h = Math.ceil(innerHeight / S);
+  if (bg.width !== w || bg.height !== h) {
+    bg.width = w;
+    bg.height = h;
+    bg.style.width = `${w * S}px`;
+    bg.style.height = `${h * S}px`;
+    bgTile = null;
   }
-  bgCtx.globalCompositeOperation = 'source-over';
+  const floor = IMG['tiles/TilesetFloor.png'];
+  if (!bgTile && floor && floor.width) {
+    const c = document.createElement('canvas');
+    c.width = c.height = 64;
+    const g = c.getContext('2d');
+    for (let i = 0; i < 16; i++) {
+      const v = (i * 7) % 5 === 0 ? FLOOR.grassVar[i % FLOOR.grassVar.length] : FLOOR.grass;
+      g.drawImage(floor, v[0], v[1], 16, 16, (i % 4) * 16, Math.floor(i / 4) * 16, 16, 16);
+    }
+    bgTile = bgCtx.createPattern(c, 'repeat');
+  }
+  bgCtx.imageSmoothingEnabled = false;
+  bgCtx.fillStyle = bgTile || '#5d8a3a';
+  bgCtx.fillRect(0, 0, w, h);
+  bgCtx.fillStyle = 'rgba(20,30,16,0.45)';
+  bgCtx.fillRect(0, 0, w, h);
+  // 가장자리 나무
+  if (IMG[SPR.treeG[0]] && IMG[SPR.treeG[0]].width) {
+    for (let i = 0; i < Math.ceil(w / 28) + 1; i++) {
+      for (const [y, name] of [[-14, i % 2 ? 'treeG' : 'pine'], [h - 22, i % 3 ? 'treeG2' : 'pink']]) {
+        const s = SPR[name];
+        bgCtx.drawImage(IMG[s[0]], s[1], s[2], s[3], s[4], i * 28 - 8 + (y > 0 ? 10 : 0), y, s[3], s[4]);
+      }
+    }
+  }
+  bgCtx.fillStyle = '#ffd1e8';
+  for (const p of petals) {
+    p.y += p.v / 60;
+    p.x += Math.sin(t / 900 + p.p) * 0.0006 + 0.0003;
+    if (p.y > 1.02) {
+      p.y = -0.02;
+      p.x = Math.random();
+    }
+    bgCtx.fillRect(Math.floor((p.x % 1) * w), Math.floor(p.y * h), p.s, p.s);
+  }
   requestAnimationFrame(drawMenuBg);
 }
 requestAnimationFrame(drawMenuBg);
 
-// ---------------- 캐릭터 미리보기 ----------------
-// Renderer의 캐릭터 그리기 함수를 작은 캔버스에 재사용
-function makePreview(c) {
-  const pv = Object.create(Renderer.prototype);
-  pv.ctx = c.getContext('2d');
-  pv.flash = new Map();
-  pv.recoils = new Map();
-  pv.settings = {};
-  pv.particles = [];
-  return pv;
-}
-
-function drawCharacter(c, cos, weapon, t, scale = 2.4) {
-  const pv = c._pv || (c._pv = makePreview(c));
-  const ctx = pv.ctx;
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.clearRect(0, 0, c.width, c.height);
-  ctx.translate(c.width / 2, c.height / 2 + 6);
-  ctx.scale(scale, scale);
-  pv.drawPlayer({ id: 0, x: 0, y: 0, aim: Math.sin(t / 900) * 0.6 - 0.3, flags: 0, act: 0, actT: 0, w: weapon, wr: 0, orbs: 0, cos, me: false, hp: 1, maxHp: 1 }, { time: t / 1000 });
+// ---------------- 캐릭터 미리보기 (도트 스프라이트) ----------------
+function drawSprite(c, weapon, t, opts = {}) {
+  const g = c.getContext('2d');
+  g.imageSmoothingEnabled = false;
+  g.clearRect(0, 0, c.width, c.height);
+  const look = lookOf(weapon);
+  const img = IMG[`chars/${look.char}.png`];
+  if (!img || !img.width) return;
+  const s = Math.floor(c.width / 16) - (opts.pad ? 1 : 0);
+  // 아래 → 오른쪽 → 위 → 왼쪽으로 돌면서 걷기
+  const dirs = [0, 3, 1, 2];
+  const col = opts.still ? 0 : dirs[Math.floor(t / 1600) % 4];
+  const row = opts.still ? 0 : Math.floor(t / 130) % 4;
+  const ox = Math.floor((c.width - 16 * s) / 2);
+  const oy = Math.floor((c.height - 16 * s) / 2);
+  const sh = IMG['chars/Shadow.png'];
+  if (sh && sh.width) g.drawImage(sh, ox + 2 * s, oy + 13 * s, 12 * s, 7 * s);
+  g.drawImage(img, col * 16, row * 16, 16, 16, ox, oy, 16 * s, 16 * s);
 }
 
 function previewLoop(t) {
-  if (!$('menu').classList.contains('hidden')) drawCharacter($('preview'), profile.d.equipped, profile.d.weapon, t);
+  if (!$('menu').classList.contains('hidden')) {
+    drawSprite($('preview'), profile.d.weapon, t);
+    document.querySelectorAll('.wcard canvas').forEach((c) => drawSprite(c, c.dataset.w, t, { still: c.dataset.w !== profile.d.weapon }));
+  }
   requestAnimationFrame(previewLoop);
 }
 requestAnimationFrame(previewLoop);
@@ -135,18 +159,18 @@ function renderWeapons() {
     const b = document.createElement('button');
     b.className = `wcard${profile.d.weapon === id ? ' sel' : ''}`;
     b.style.setProperty('--wc', w.color);
-    b.innerHTML = `<div class="wi">${w.icon}</div><div class="wn">${w.name}</div><div class="wr">${w.role}</div>`;
+    b.innerHTML = `<canvas width="48" height="48" data-w="${id}"></canvas><div class="wn">${w.name}</div><div class="wr">${w.role}</div>`;
     b.title = `우클릭 ${w.basic.name}: ${w.basic.desc}\nQ ${w.q.name}: ${w.q.hint}\nW ${w.w.name}: ${w.w.hint}\nE ${w.e.name}: ${w.e.hint}\nR ${w.r.name}: ${w.r.hint}`;
     b.onclick = () => {
       profile.d.weapon = id;
       profile.save();
       renderWeapons();
-      play('ui');
     };
     box.appendChild(b);
   }
+  const w = WEAPONS[profile.d.weapon] || WEAPONS.greatsword;
+  $('class-info').innerHTML = `<b style="color:${w.color}">${w.name}</b><br>${w.role}<br>Q ${w.q.name} · W ${w.w.name}<br>E ${w.e.name} · R ${w.r.name}`;
 }
-
 
 function renderQuests() {
   const box = $('quests');
@@ -155,16 +179,13 @@ function renderQuests() {
     const done = q.progress >= q.goal;
     const el = document.createElement('div');
     el.className = `quest${q.claimed ? ' done' : ''}`;
-    el.innerHTML = `<div class="qh"><span>${q.name}</span><span class="qr">◎ ${q.reward}</span></div><div class="qbar"><i style="width:${(100 * q.progress) / q.goal}%"></i></div><small class="muted">${q.progress} / ${q.goal}</small>`;
+    el.innerHTML = `<div class="qh"><span>${q.name}</span><span class="qr">● ${q.reward}</span></div><div class="qbar"><i style="width:${(100 * q.progress) / q.goal}%"></i></div><small class="muted">${q.progress} / ${q.goal}</small>`;
     if (done && !q.claimed) {
       const b = document.createElement('button');
       b.textContent = '보상 받기';
       b.onclick = () => {
         const got = profile.claimQuest(q.id);
-        if (got) {
-          toast(`퀘스트 완료! 오볼 +${got}`);
-          play('chest');
-        }
+        if (got) toast(`퀘스트 완료! 코인 +${got}`);
         renderMenu();
       };
       el.appendChild(b);
@@ -172,7 +193,7 @@ function renderQuests() {
     box.appendChild(el);
   }
   const s = profile.d.streak;
-  $('streak').innerHTML = STREAK_REWARDS.map((r, i) => `<span class="${i < s.count ? 'on' : ''} ${r.gems ? 'gemday' : ''}" title="${i + 1}일차">${r.gems ? `◆${r.gems}` : `◎${r.obols}`}</span>`).join('');
+  $('streak').innerHTML = STREAK_REWARDS.map((r, i) => `<span class="${i < s.count ? 'on' : ''} ${r.gems ? 'gemday' : ''}" title="${i + 1}일차">${r.gems ? `◆${r.gems}` : `●${r.obols}`}</span>`).join('');
 }
 
 function renderMenu() {
@@ -194,10 +215,9 @@ if (STANDALONE) {
 if (ADS_ENABLED) $('ad-menu').classList.remove('hidden');
 
 const streak = profile.checkStreak();
-if (streak) setTimeout(() => toast(`연속 접속 ${streak.day}일차 보상: ${streak.reward.gems ? `영혼석 +${streak.reward.gems}` : `오볼 +${streak.reward.obols}`}`, 4000), 600);
+if (streak) setTimeout(() => toast(`연속 접속 ${streak.day}일차 보상: ${streak.reward.gems ? `보석 +${streak.reward.gems}` : `코인 +${streak.reward.obols}`}`, 4000), 600);
 renderMenu();
 
-// 서버 상태 (다음 판 정보)
 async function pollStatus() {
   if (STANDALONE || $('menu').classList.contains('hidden')) return;
   try {
@@ -217,18 +237,20 @@ pollStatus();
 
 // ---------------- 게임 시작 ----------------
 function joinMsg(mode, extra = {}) {
-  const name = ($('name').value || '').trim() || `영혼${Math.floor(Math.random() * 900 + 100)}`;
+  const name = ($('name').value || '').trim() || `닌자${Math.floor(Math.random() * 900 + 100)}`;
   return { t: 'join', mode, name, weapon: profile.d.weapon, cos: profile.d.equipped, ...extra };
 }
 
 async function connect(kind, msg, opts = {}) {
-  unlockAudio();
+  await assetsReady;
+  if (client) client.stop();
   if (transport) transport.close();
   if (kind === 'local') transport = new LocalTransport({ botLevel: opts.botLevel ?? 1 });
   else {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     transport = new WSTransport(`${proto}://${location.host}/ws`);
   }
+  const tr = transport;
   client = new GameClient({
     transport,
     renderer,
@@ -237,14 +259,15 @@ async function connect(kind, msg, opts = {}) {
     onLobby: showLobby,
     onStart: onGameStart,
     onEnd: onGameEnd,
+    onDeath,
     onError: (m) => {
       toast(m);
       backToMenu();
     },
   });
-  transport.onmsg = (m) => client.handle(m);
+  transport.onmsg = (m) => client && tr === transport && client.handle(m);
   transport.onclose = () => {
-    if (client && client.running) {
+    if (client && client.running && !client.ended) {
       toast('서버 연결이 끊어졌습니다.');
       backToMenu();
     }
@@ -262,6 +285,14 @@ async function connect(kind, msg, opts = {}) {
 function startQuick() {
   if (STANDALONE) connect('local', joinMsg('practice'), { botLevel: Number($('difficulty').value) });
   else connect('ws', joinMsg('public'));
+}
+
+// 다음 판: 같은 방식으로 바로 새 게임
+function nextGame() {
+  ['deathscreen', 'end', 'pause'].forEach((id) => $(id).classList.add('hidden'));
+  if (!lastMode) return backToMenu();
+  const { kind, msg, opts } = lastMode;
+  connect(kind, { ...msg, weapon: profile.d.weapon, mode: msg.mode === 'create' || msg.mode === 'code' ? 'public' : msg.mode }, opts);
 }
 
 $('btn-play').onclick = startQuick;
@@ -283,15 +314,13 @@ $('room-join-go').onclick = () => {
 };
 
 const TIPS = [
-  '오브를 들고 있으면 위치가 모두에게 보입니다. 혼자 다니지 마세요.',
-  '바닥에 빨간 예고가 보이면 우클릭으로 빠져나가거나 이동기(E)로 피하세요.',
-  '정글 캠프는 잡으면 일정 시간 뒤 다시 생깁니다. 동선을 짜서 돌아보세요.',
-  'Q·W·E 스킬 각인이 모두 희귀 이상이면 R도 함께 강해집니다.',
-  '기절·속박은 최대 1초, 이후 1.5초는 면역입니다.',
-  '상자는 우클릭하면 걸어가서 0.6초 만에 열립니다. 좋은 장비는 밟기만 해도 주워요.',
-  '넉백으로 적을 기둥에 박으면 추가 피해와 기절!',
-  '정화(보조 주문)는 기절 중에도 쓸 수 있습니다.',
-  '죽으면 오브를 모두 떨어뜨리고 가장 높은 스킬이 한 단계 강등됩니다.',
+  '큰 상자와 현상금 주머니는 골드·프리즘 등급이 잘 나옵니다.',
+  '수풀 안에 있으면 멀리 있는 적에게 보이지 않아요. 공격하면 들킵니다.',
+  '정글 캠프를 다 잡으면 상자가 떨어집니다.',
+  '자기장 예고(흰 점선)가 뜨면 미리 안쪽으로 이동하세요.',
+  '킬을 2번 이상 하면 현상금이 붙어 지도에 표시됩니다.',
+  'D 구르기는 짧게 무적입니다. 큰 스킬을 피하세요!',
+  '증강 카드는 싸우면서 1·2·3 키로 골라도 됩니다.',
 ];
 
 function showLobby(m) {
@@ -323,6 +352,8 @@ $('lobby-botlevel').onchange = sendCfg;
 $('lobby-leave').onclick = backToMenu;
 
 function onGameStart() {
+  applied = false;
+  lastEnd = null;
   $('lobby').classList.add('hidden');
   $('lobby-tip').textContent = '';
   $('menu').classList.add('hidden');
@@ -330,7 +361,6 @@ function onGameStart() {
   $('end').classList.add('hidden');
   input.enabled = true;
   input.reset();
-  play('horn', 0.8);
 }
 
 function backToMenu() {
@@ -349,8 +379,12 @@ function backToMenu() {
   renderMenu();
 }
 
-// Esc: 일시 메뉴
+// 키: 1·2·3 증강 / ←→ 관전 / Esc 메뉴
 input.onKey = (e) => {
+  if (client && /^Digit[123]$/.test(e.code)) {
+    hud.pick(client, Number(e.code.slice(5)));
+    return true;
+  }
   if ((e.code === 'ArrowLeft' || e.code === 'ArrowRight') && transport) {
     transport.send({ t: 'spec', d: e.code === 'ArrowLeft' ? -1 : 1 });
     return true;
@@ -364,43 +398,92 @@ input.onKey = (e) => {
 $('pause-resume').onclick = () => closeModal('pause');
 $('pause-quit').onclick = backToMenu;
 
+// ---------------- 보상 ----------------
+function applyResult(r, total) {
+  if (applied || !r) return null;
+  applied = true;
+  const rewards = computeRewards({ placement: r.placement, total, kills: r.kills, won: r.placement === 1 });
+  const res = profile.applyMatch(r, rewards, total);
+  return { rewards, levels: res.levels };
+}
+
+function rewardText(got) {
+  if (!got) return '';
+  return `코인 +${got.rewards.obols} · 계정 경험치 +${got.rewards.xp}${got.levels ? ` · 계정 레벨 업! (+${got.levels * 50} 코인)` : ''}`;
+}
+
+// ---------------- 탈락 ----------------
+function onDeath(me) {
+  input.reset();
+  const total = MAX_PLAYERS;
+  const got = applyResult({ placement: me.pl, kills: me.k, deaths: 1, chests: me.co || 0, monsterKills: me.mk || 0, augs: client && client.ui ? client.ui.augs : [] }, total);
+  $('death-place').textContent = `#${me.pl}`;
+  const killer = me.kb ? client.nameOf(me.kb) : '';
+  $('death-sub').textContent = killer ? `${killer}에게 쓰러졌습니다` : '쓰러졌습니다';
+  $('death-stats').innerHTML = [
+    ['처치', me.k],
+    ['상자', me.co || 0],
+    ['증강', client && client.ui ? client.ui.augs.length : 0],
+    ['피해', (me.dmg || 0).toLocaleString()],
+  ]
+    .map(([k, v]) => `<div><b>${v}</b><small>${k}</small></div>`)
+    .join('');
+  $('death-rewards').textContent = rewardText(got);
+  $('deathscreen').classList.remove('hidden');
+  if (client) client.spectating = false;
+  renderWallet();
+}
+$('death-next').onclick = nextGame;
+$('spec-next').onclick = nextGame;
+$('death-menu').onclick = backToMenu;
+$('death-spec').onclick = () => {
+  $('deathscreen').classList.add('hidden');
+  if (client) client.spectating = true;
+};
+
 // ---------------- 결과 ----------------
 function onGameEnd(m) {
-  input.enabled = false;
   lastEnd = m;
   const me = m.results.find((r) => r.id === m.you);
   const winner = m.results.find((r) => r.id === m.winner);
   const won = me && me.placement === 1;
+  // 탈락 화면을 보고 있으면 결과창은 띄우지 않음 (다음 판 버튼이 이미 있음)
+  if (!won && !$('deathscreen').classList.contains('hidden')) return;
+  input.enabled = false;
+  $('deathscreen').classList.add('hidden');
   const title = $('end-title');
-  title.textContent = won ? '승천!' : `${me ? me.placement : '-'}위`;
+  title.textContent = won ? '🏆 우승!' : `#${me ? me.placement : '-'}`;
   title.classList.toggle('win', won);
-  const how = m.reason === 'ritual' ? '승천 의식 성공' : '시간 종료 · 오브 점수';
-  $('end-sub').textContent = won ? `지상으로 올라갑니다 (${how})` : `우승: ${winner ? winner.name : '-'} (${how})`;
+  $('end-sub').textContent = won ? '최후의 닌자가 되었습니다!' : `우승: ${winner ? winner.name : '-'}`;
+  const got = applyResult(me, m.results.length);
   if (me) {
     $('end-stats').innerHTML = [
+      ['순위', `#${me.placement}`],
       ['처치', me.kills],
-      ['사망', me.deaths],
-      ['오브 점수', me.score],
-      ['오브 획득', me.orbTakes],
+      ['상자', me.chests],
       ['레벨', me.level],
-      ['가한 피해', me.dmg.toLocaleString()],
+      ['피해', me.dmg.toLocaleString()],
     ]
-      .map(([k, v]) => `<div><b>${v}</b><small class="muted">${k}</small></div>`)
+      .map(([k, v]) => `<div><b>${v}</b><small>${k}</small></div>`)
       .join('');
-    const res = profile.applyMatch(me, m.rewards, m.results.length);
-    $('end-rewards').textContent = `오볼 +${m.rewards.obols} · 계정 경험치 +${m.rewards.xp}${res.levels ? ` · 계정 레벨 업! (+${res.levels * 50} 오볼)` : ''}`;
+    $('end-augs').innerHTML = me.augs
+      .map((id) => {
+        const a = AUG_BY_ID[id];
+        return a ? `<span class="aug-chip" style="--tc:${AUG_TIERS[a.tier].color}"><i>${a.icon}</i>${a.name}</span>` : '';
+      })
+      .join('');
+    $('end-rewards').textContent = got ? rewardText(got) : '';
     const qs = profile.quests().filter((q) => !q.claimed && q.progress >= q.goal);
     $('end-quests').textContent = qs.length ? `완료한 퀘스트 ${qs.length}개 — 메뉴에서 보상을 받으세요` : '';
   }
-  $('end-table').innerHTML = `<table><tr><th>#</th><th>이름</th><th>무기</th><th>점수</th><th>처치</th><th>사망</th></tr>${m.results
-    .map((r) => `<tr class="${r.id === m.you ? 'me' : ''}"><td>${r.placement}</td><td>${escapeHtml(r.name)}</td><td>${WEAPONS[r.weapon].icon}</td><td>${r.score}</td><td>${r.kills}</td><td>${r.deaths}</td></tr>`)
+  $('end-table').innerHTML = `<table><tr><th>#</th><th>이름</th><th>직업</th><th>처치</th><th>증강</th></tr>${m.results
+    .map((r) => `<tr class="${r.id === m.you ? 'me' : ''}"><td>${r.placement}</td><td>${escapeHtml(r.name)}</td><td>${WEAPONS[r.weapon].name}</td><td>${r.kills}</td><td>${r.augs.length}</td></tr>`)
     .join('')}</table>`;
   $('end-ad').disabled = false;
-  $('end-ad').textContent = '▶ 광고 보고 오볼 2배';
+  $('end-ad').textContent = '▶ 광고 보고 코인 2배';
+  $('end-ad').classList.toggle('hidden', !got);
   $('end').classList.remove('hidden');
-  play(won ? 'win' : 'lose');
   renderWallet();
-  // 판 사이 광고: 3판에 1번, 첫 3판은 없음
   if (ADS_ENABLED && profile.d.games > 3 && profile.d.games % 3 === 0) showAd(() => {});
 }
 
@@ -420,57 +503,48 @@ function showAd(done) {
 }
 
 $('end-ad').onclick = () => {
-  if (!lastEnd || !lastEnd.rewards) return;
+  if (!lastEnd) return;
+  const me = lastEnd.results.find((r) => r.id === lastEnd.you);
+  if (!me) return;
+  const bonus = computeRewards({ placement: me.placement, total: lastEnd.results.length, kills: me.kills, won: me.placement === 1 }).obols;
   $('end-ad').disabled = true;
   showAd(() => {
-    profile.d.obols += lastEnd.rewards.obols;
+    profile.d.obols += bonus;
     profile.save();
-    $('end-ad').textContent = `오볼 +${lastEnd.rewards.obols} 추가 획득!`;
+    $('end-ad').textContent = `코인 +${bonus} 추가 획득!`;
     renderWallet();
-    play('chest');
   });
 };
-$('end-again').onclick = () => {
-  if (!lastMode) return backToMenu();
-  const { kind, msg, opts } = lastMode;
-  $('end').classList.add('hidden');
-  connect(kind, { ...msg, mode: msg.mode === 'create' || msg.mode === 'code' ? 'public' : msg.mode }, opts);
-};
+$('end-again').onclick = nextGame;
 $('end-menu').onclick = backToMenu;
 
 // ---------------- 상점 ----------------
-let storeTab = 'skin';
+let storeTab = 'trail';
 let storeMode = 'store';
+// 스킨은 도트 캐릭터용으로 다시 만들 때까지 숨김
+const STORE_TYPES = Object.entries(COSMETIC_TYPES).filter(([t]) => t !== 'skin');
 
 function previewCosmetic(c, cv, t) {
   const ctx = cv.getContext('2d');
-  if (c.type === 'skin') return drawCharacter(cv, { ...profile.d.equipped, skin: c.id }, profile.d.weapon, t, 2.2);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, cv.width, cv.height);
   const w = cv.width;
   const h = cv.height;
-  ctx.globalCompositeOperation = 'lighter';
   if (c.type === 'trail') {
     for (let i = 0; i < 9; i++) {
       const k = i / 8;
-      const col = c.style === 'rainbow' ? ['#ff4d4d', '#ffb340', '#ffe14d', '#5fd35f', '#4da3ff', '#c56bff'][i % 6] : c.color;
+      ctx.fillStyle = c.style === 'rainbow' ? ['#ff4d4d', '#ffb340', '#ffe14d', '#5fd35f', '#4da3ff', '#c56bff'][i % 6] : c.color;
       ctx.globalAlpha = 0.2 + k * 0.8;
-      ctx.fillStyle = col;
-      ctx.beginPath();
-      ctx.arc(20 + k * (w - 40), h / 2 + Math.sin(t / 300 + i) * 6, 6 + k * 8, 0, Math.PI * 2);
-      ctx.fill();
+      const s = 8 + k * 14;
+      ctx.fillRect(20 + k * (w - 60), h / 2 + Math.sin(t / 300 + i) * 8 - s / 2, s, s);
     }
   } else if (c.type === 'slash') {
     ctx.translate(w / 2 - 20, h / 2);
     const a = (t / 400) % (Math.PI * 2);
-    const g = ctx.createRadialGradient(0, 0, 20, 0, 0, 60);
-    g.addColorStop(0, c.color2 + '00');
-    g.addColorStop(0.7, c.color + 'cc');
-    g.addColorStop(1, c.color2);
-    ctx.fillStyle = g;
+    ctx.fillStyle = c.color;
     ctx.beginPath();
     ctx.arc(0, 0, 60, a - 1.2, a + 1.2);
-    ctx.arc(0, 0, 32, a + 1.2, a - 1.2, true);
+    ctx.arc(0, 0, 36, a + 1.2, a - 1.2, true);
     ctx.fill();
   } else if (c.type === 'killfx') {
     for (let i = 0; i < 14; i++) {
@@ -478,26 +552,22 @@ function previewCosmetic(c, cv, t) {
       const d = 18 + ((t / 15 + i * 9) % 40);
       ctx.fillStyle = c.color;
       ctx.globalAlpha = 1 - d / 60;
-      ctx.beginPath();
-      ctx.arc(w / 2 + Math.cos(a) * d, h / 2 + Math.sin(a) * d, 4, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.fillRect(w / 2 + Math.cos(a) * d - 4, h / 2 + Math.sin(a) * d - 4, 8, 8);
     }
   } else {
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.fillStyle = '#c9a8ff';
-    ctx.font = '800 16px "Noto Sans KR"';
+    ctx.fillStyle = '#ffcf4a';
+    ctx.font = '800 18px "Noto Sans KR"';
     ctx.textAlign = 'center';
     ctx.fillText(c.text || '(없음)', w / 2, h / 2 + 6);
   }
   ctx.globalAlpha = 1;
-  ctx.globalCompositeOperation = 'source-over';
 }
 
 function renderStore() {
   $('store-title').textContent = storeMode === 'store' ? '상점' : '보관함';
   const tabs = $('store-tabs');
   tabs.innerHTML = '';
-  for (const [type, label] of Object.entries(COSMETIC_TYPES)) {
+  for (const [type, label] of STORE_TYPES) {
     const b = document.createElement('button');
     b.textContent = label;
     b.className = storeTab === type ? 'on' : '';
@@ -525,7 +595,6 @@ function renderStore() {
       btn.textContent = '장착';
       btn.onclick = () => {
         profile.equip(c.id);
-        play('pickup');
         renderStore();
       };
     } else if (c.cur === 'achv') {
@@ -533,14 +602,13 @@ function renderStore() {
       btn.textContent = `업적: ${c.achv.label} (${Math.min(profile.d.stats[c.achv.stat] || 0, c.achv.goal)}/${c.achv.goal})`;
     } else {
       btn.className = c.cur === 'gem' ? 'buy-gem' : 'buy-obol';
-      btn.textContent = `${c.cur === 'gem' ? '◆' : '◎'} ${c.price.toLocaleString()}`;
+      btn.textContent = `${c.cur === 'gem' ? '◆' : '●'} ${c.price.toLocaleString()}`;
       btn.onclick = () => {
         if (profile.buy(c.id)) {
           profile.equip(c.id);
           toast(`${c.name} 구매 완료!`);
-          play('chest');
         } else {
-          toast(c.cur === 'gem' ? '영혼석이 부족합니다.' : '오볼이 부족합니다. 게임을 플레이해서 모으세요!');
+          toast(c.cur === 'gem' ? '보석이 부족합니다.' : '코인이 부족합니다. 게임을 플레이해서 모으세요!');
           if (c.cur === 'gem') openModal('gemshop');
         }
         renderStore();
@@ -586,8 +654,7 @@ $('gem-trial').onclick = () => {
   profile.save();
   renderWallet();
   if (!$('store').classList.contains('hidden')) renderStore();
-  toast('체험용 영혼석 500개를 받았습니다 (실제 결제 아님)');
-  play('chest');
+  toast('체험용 보석 500개를 받았습니다 (실제 결제 아님)');
 };
 $('btn-login').onclick = () => openModal('login');
 document.querySelectorAll('[data-oauth]').forEach((b) => (b.onclick = () => toast(`${b.dataset.oauth} 로그인은 서버 배포 후 연결됩니다.`)));
@@ -596,24 +663,14 @@ document.querySelectorAll('[data-oauth]').forEach((b) => (b.onclick = () => toas
 $('btn-help').onclick = () => {
   $('help-weapons').innerHTML = WEAPON_IDS.map((id) => {
     const w = WEAPONS[id];
-    const row = (k) => {
-      const sk = w[k];
-      const up = sk.up ? `<br><small style="opacity:.75">　영웅: ${sk.up[3].upDesc} · 전설: ${sk.up[4].upDesc}</small>` : '';
-      return `<br>${k.toUpperCase()} ${sk.icon || ''} <b>${sk.name}</b> — ${sk.hint || sk.desc}${up}`;
-    };
-    return `<div class="hw" style="border-color:${w.color}55"><b style="color:${w.color}">${w.icon} ${w.name}</b> · ${w.role}<br>우클릭: ${w.basic.name} — ${w.basic.desc}${['q', 'w', 'e', 'r'].map(row).join('')}</div>`;
+    const row = (k) => `<br>${k.toUpperCase()} ${w[k].icon || ''} <b>${w[k].name}</b> — ${w[k].hint || w[k].desc}`;
+    return `<div class="hw" style="border-color:${w.color}88"><b style="color:${w.color}">${w.icon} ${w.name}</b> · ${w.role}<br>우클릭: ${w.basic.name} — ${w.basic.desc}${['q', 'w', 'e', 'r'].map(row).join('')}</div>`;
   }).join('');
   openModal('help');
 };
 $('btn-settings').onclick = () => {
-  $('set-volume').value = profile.d.settings.volume;
   $('set-shake').checked = profile.d.settings.shake;
   openModal('settings');
-};
-$('set-volume').oninput = () => {
-  profile.d.settings.volume = Number($('set-volume').value);
-  setVolume(profile.d.settings.volume);
-  profile.save();
 };
 $('set-shake').onchange = () => {
   profile.d.settings.shake = $('set-shake').checked;
@@ -622,4 +679,4 @@ $('set-shake').onchange = () => {
 };
 
 // 자동화 테스트용 진입점
-window.__styx = { startPractice: () => $('btn-practice').click(), client: () => client, profile };
+window.__styx = { startPractice: () => $('btn-practice').click(), client: () => client, profile, renderer };

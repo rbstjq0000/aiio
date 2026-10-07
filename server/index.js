@@ -17,6 +17,7 @@ const TYPES = {
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json',
   '.png': 'image/png',
+  '.ttf': 'font/ttf',
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
 };

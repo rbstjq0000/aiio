@@ -16,10 +16,23 @@ const res = await build({
   legalComments: 'none',
 });
 const js = res.outputFiles[0].text;
-const css = fs.readFileSync(path.join(root, 'client/style.css'), 'utf8');
+// 도트 에셋(이미지·글꼴)을 data URL로 넣어 파일 하나로 열리게
+const assetDir = path.join(root, 'client/assets');
+const MIME = { '.png': 'image/png', '.ttf': 'font/ttf' };
+const assets = {};
+(function walk(dir) {
+  for (const f of fs.readdirSync(dir)) {
+    const full = path.join(dir, f);
+    if (fs.statSync(full).isDirectory()) walk(full);
+    else if (MIME[path.extname(f)]) assets[path.relative(assetDir, full).split(path.sep).join('/')] = `data:${MIME[path.extname(f)]};base64,${fs.readFileSync(full).toString('base64')}`;
+  }
+})(assetDir);
+const css = fs
+  .readFileSync(path.join(root, 'client/style.css'), 'utf8')
+  .replace(/url\('\.\/assets\/([^']+)'\)/g, (m, f) => (assets[f] ? `url('${assets[f]}')` : m));
 let html = fs.readFileSync(path.join(root, 'client/index.html'), 'utf8');
 html = html.replace('<link rel="stylesheet" href="./style.css">', () => `<style>\n${css}\n</style>`);
-html = html.replace('<script type="module" src="./main.js"></script>', () => `<script>window.__STYX_STANDALONE__=true;</script>\n<script>\n${js.replace(/<\/script/g, '<\\/script')}\n</script>`);
+html = html.replace('<script type="module" src="./main.js"></script>', () => `<script>window.__STYX_STANDALONE__=true;window.__STYX_ASSETS__=${JSON.stringify(assets)};</script>\n<script>\n${js.replace(/<\/script/g, '<\\/script')}\n</script>`);
 fs.mkdirSync(path.join(root, 'dist'), { recursive: true });
 const out = path.join(root, 'dist/styx-demo.html');
 fs.writeFileSync(out, html);

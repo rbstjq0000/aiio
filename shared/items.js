@@ -182,7 +182,7 @@ export const WEAPONS = {
       type: 'melee',
       moveMult: 0.45,
       comboWindow: 0.35,
-      combo: [{ dmg: 80, range: 150, arc: 0.55, windup: 0.09, dur: 0.48, lunge: 30, knock: 90 }],
+      combo: [{ dmg: 88, range: 150, arc: 0.55, windup: 0.09, dur: 0.48, lunge: 30, knock: 90 }],
     },
     q: {
       name: '용의 일격', icon: '🐉', type: 'line', windup: 0.22, len: 340, width: 56, dmg: 140, dur: 0.38, moveMult: 0.2, flagDash: true, cd: 6,
